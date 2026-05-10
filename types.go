@@ -26,6 +26,11 @@ type Model struct {
 	// Features describes the capabilities resolved for this model.
 	Features Features `json:"features"`
 
+	// Flags is a small set of booleans summarizing the resolution result.
+	// Always present — useful for quick filtering without walking the
+	// full Model.
+	Flags Flags `json:"flags"`
+
 	// Lineage is the chain of base models, ordered from immediate parent to
 	// the oldest known ancestor. Empty when no base_model is declared.
 	Lineage []string `json:"lineage,omitempty"`
@@ -39,6 +44,32 @@ type Model struct {
 	// cardData.license (with fallback to a `license:*` HF tag). Nil when
 	// HF resolution failed, was skipped, or no license was declared.
 	License *License `json:"license,omitempty"`
+}
+
+// Flags summarizes a Model's resolution result with a small set of
+// booleans that are cheap to filter on. Always present in the JSON.
+type Flags struct {
+	// Compliant is true when the compliance tag list (Tags.Compliance)
+	// has at least one entry — i.e. the model's id or one of its
+	// aliases matched the curated watchlist (Uncensored, Dolphin, RP,
+	// ...). The name follows the field's literal definition; treat it
+	// as a "matched the compliance watchlist" flag rather than as a
+	// policy-clean indicator.
+	Compliant bool `json:"compliant"`
+
+	// HuggingFace is true when the model resolved successfully against
+	// the HuggingFace Hub (the /api/models/{id} request returned 2xx).
+	// Always false when SkipHF is set.
+	HuggingFace bool `json:"huggingface"`
+
+	// Lineage is true when at least one ancestor was resolved via
+	// cardData.base_model.
+	Lineage bool `json:"lineage"`
+
+	// Quantized is true when Features.Quantization is set to anything
+	// other than a native float dtype (bf16, fp16, fp32). Empty
+	// quantization (no signal) is reported as false.
+	Quantized bool `json:"quantized"`
 }
 
 // Tags collects the named tag sets attached to a Model.

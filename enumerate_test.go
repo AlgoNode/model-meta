@@ -189,6 +189,20 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	if gemma.Features.Quantization != "nvfp4" {
 		t.Errorf("gemma quant = %q, want nvfp4 (refined from compressed-tensors)", gemma.Features.Quantization)
 	}
+
+	// Flags pinned per model.
+	wantFlags := map[string]Flags{
+		"meta-llama/Meta-Llama-3-8B-Instruct": {Compliant: false, HuggingFace: true, Lineage: true, Quantized: false},
+		"BAAI/bge-small-en":                   {Compliant: false, HuggingFace: true, Lineage: false, Quantized: false},
+		"unknown/Model-AWQ":                   {Compliant: false, HuggingFace: false, Lineage: false, Quantized: true},
+		"AEON/Gemma-NVFP4":                    {Compliant: false, HuggingFace: true, Lineage: false, Quantized: true},
+	}
+	for root, want := range wantFlags {
+		got := byRoot[root].Flags
+		if got != want {
+			t.Errorf("%s flags = %+v, want %+v", root, got, want)
+		}
+	}
 }
 
 // TestResolveSingleModel hits a fake HF API directly through Resolve and
@@ -239,6 +253,10 @@ func TestResolveSingleModel(t *testing.T) {
 	if m.Tags == nil || len(m.Tags.HuggingFace) == 0 {
 		t.Errorf("Tags.HuggingFace should be populated, got %+v", m.Tags)
 	}
+	wantFlags := Flags{Compliant: false, HuggingFace: true, Lineage: true, Quantized: false}
+	if m.Flags != wantFlags {
+		t.Errorf("flags = %+v, want %+v", m.Flags, wantFlags)
+	}
 }
 
 func TestResolveSkipHF(t *testing.T) {
@@ -286,5 +304,9 @@ func TestEnumerateSkipHF(t *testing.T) {
 	}
 	if models[0].Tags != nil {
 		t.Errorf("Tags must be nil with SkipHF and no compliance match, got %+v", models[0].Tags)
+	}
+	wantFlags := Flags{Compliant: false, HuggingFace: false, Lineage: false, Quantized: true}
+	if models[0].Flags != wantFlags {
+		t.Errorf("flags = %+v, want %+v", models[0].Flags, wantFlags)
 	}
 }

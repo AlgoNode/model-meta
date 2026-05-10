@@ -119,9 +119,11 @@ func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup
 		OwnedBy:     g.ownedBy,
 	}
 	var hfTags []string
+	var hfResolved bool
 	if hf != nil {
 		info, ferr := hf.fetch(ctx, g.root)
 		if ferr == nil {
+			hfResolved = true
 			m.Features, hfTags = extractFeatures(info, g.root)
 			m.Lineage = hf.resolveLineage(ctx, g.root, e.MaxLineageDepth)
 			m.License = extractLicense(info.CardData, hfTags)
@@ -148,7 +150,24 @@ func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup
 	if len(hfTags) > 0 || len(complianceTags) > 0 {
 		m.Tags = &Tags{HuggingFace: hfTags, Compliance: complianceTags}
 	}
+	m.Flags = Flags{
+		Compliant:   len(complianceTags) > 0,
+		HuggingFace: hfResolved,
+		Lineage:     len(m.Lineage) > 0,
+		Quantized:   isQuantized(m.Features.Quantization),
+	}
 	return m
+}
+
+// isQuantized returns true for any quantization label other than the
+// native float dtypes (bf16, fp16, fp32). An empty label (no signal)
+// is treated as not quantized.
+func isQuantized(q string) bool {
+	switch q {
+	case "", "bf16", "fp16", "fp32":
+		return false
+	}
+	return true
 }
 
 // rootGroup collects vLLM entries that share the same root id.

@@ -62,7 +62,13 @@ that resolves to it:
     "huggingface": ["transformers", "tool-use", "license:llama3"],
     "compliance":  []
   },
-  "license": { "id": "llama3" }
+  "license": { "id": "llama3" },
+  "flags": {
+    "compliant":   false,
+    "huggingface": true,
+    "lineage":     true,
+    "quantized":   false
+  }
 }
 ```
 
