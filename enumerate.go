@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -75,46 +76,79 @@ func (e *Enumerator) Enumerate(ctx context.Context) ([]Model, error) {
 
 	out := make([]Model, 0, len(groups))
 	for _, g := range groups {
-		m := Model{
-			Root:        g.root,
-			Aliases:     g.aliases,
-			MaxModelLen: g.maxModelLen,
-			OwnedBy:     g.ownedBy,
-		}
-		var hfTags []string
-		if hf != nil {
-			info, ferr := hf.fetch(ctx, g.root)
-			if ferr == nil {
-				m.Features, hfTags = extractFeatures(info, g.root)
-				m.Lineage = hf.resolveLineage(ctx, g.root, e.MaxLineageDepth)
-				m.License = extractLicense(info.CardData, hfTags)
-				if m.MaxModelLen == 0 && info.Config.MaxPositionEmbed > 0 {
-					m.MaxModelLen = info.Config.MaxPositionEmbed
-				}
-				// The API summary truncates compressed-tensors metadata;
-				// fetch the raw config.json to recover the real format.
-				if m.Features.Quantization == "compressed-tensors" {
-					if body, err := hf.fetchRawConfig(ctx, g.root); err == nil {
-						if refined := refineCompressedQuant(body); refined != "" {
-							m.Features.Quantization = refined
-						}
-					}
-				}
-			} else {
-				// Without HF, still derive what we can from the id alone.
-				m.Features, _ = extractFeatures(nil, g.root)
-			}
-		} else {
-			m.Features, _ = extractFeatures(nil, g.root)
-		}
-		complianceTags := matchComplianceTags(g.root, g.aliases)
-		if len(hfTags) > 0 || len(complianceTags) > 0 {
-			m.Tags = &Tags{HuggingFace: hfTags, Compliance: complianceTags}
-		}
-		out = append(out, m)
+		out = append(out, e.resolveModel(ctx, hf, g))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Root < out[j].Root })
 	return out, nil
+}
+
+// Resolve fetches metadata for a single HuggingFace model id without
+// consulting any vLLM endpoint. The returned Model has empty Aliases (no
+// endpoint catalogue exists to derive them from) and is otherwise filled
+// the same way Enumerate fills its entries: features, license, lineage,
+// quant detection (incl. compressed-tensors refinement), and the tags
+// block. SkipHF is honored — with it set, only id-derived signals are
+// used.
+func (e *Enumerator) Resolve(ctx context.Context, modelID string) (*Model, error) {
+	if e == nil {
+		return nil, errors.New("modelmeta: nil Enumerator")
+	}
+	if strings.TrimSpace(modelID) == "" {
+		return nil, errors.New("modelmeta: empty model id")
+	}
+	var hf *hfClient
+	if !e.SkipHF {
+		hfHTTP := e.HFHTTPClient
+		if hfHTTP == nil {
+			hfHTTP = &http.Client{Timeout: 30 * time.Second}
+		}
+		hf = newHFClient(e.HFBaseURL, e.HFToken, hfHTTP)
+	}
+	m := e.resolveModel(ctx, hf, rootGroup{root: modelID})
+	return &m, nil
+}
+
+// resolveModel produces a Model for one rootGroup. When hf is nil (SkipHF
+// or constructor failure) only id-derived signals are used. Shared by
+// Enumerate and Resolve so the two entry points stay in lockstep.
+func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup) Model {
+	m := Model{
+		Root:        g.root,
+		Aliases:     g.aliases,
+		MaxModelLen: g.maxModelLen,
+		OwnedBy:     g.ownedBy,
+	}
+	var hfTags []string
+	if hf != nil {
+		info, ferr := hf.fetch(ctx, g.root)
+		if ferr == nil {
+			m.Features, hfTags = extractFeatures(info, g.root)
+			m.Lineage = hf.resolveLineage(ctx, g.root, e.MaxLineageDepth)
+			m.License = extractLicense(info.CardData, hfTags)
+			if m.MaxModelLen == 0 && info.Config.MaxPositionEmbed > 0 {
+				m.MaxModelLen = info.Config.MaxPositionEmbed
+			}
+			// The API summary truncates compressed-tensors metadata;
+			// fetch the raw config.json to recover the real format.
+			if m.Features.Quantization == "compressed-tensors" {
+				if body, err := hf.fetchRawConfig(ctx, g.root); err == nil {
+					if refined := refineCompressedQuant(body); refined != "" {
+						m.Features.Quantization = refined
+					}
+				}
+			}
+		} else {
+			// Without HF, still derive what we can from the id alone.
+			m.Features, _ = extractFeatures(nil, g.root)
+		}
+	} else {
+		m.Features, _ = extractFeatures(nil, g.root)
+	}
+	complianceTags := matchComplianceTags(g.root, g.aliases)
+	if len(hfTags) > 0 || len(complianceTags) > 0 {
+		m.Tags = &Tags{HuggingFace: hfTags, Compliance: complianceTags}
+	}
+	return m
 }
 
 // rootGroup collects vLLM entries that share the same root id.

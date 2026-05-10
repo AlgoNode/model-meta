@@ -191,6 +191,84 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	}
 }
 
+// TestResolveSingleModel hits a fake HF API directly through Resolve and
+// verifies that a complete Model is built without any vLLM endpoint.
+func TestResolveSingleModel(t *testing.T) {
+	hfMux := http.NewServeMux()
+	hfMux.HandleFunc("/api/models/meta-llama/Meta-Llama-3-8B", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"meta-llama/Meta-Llama-3-8B",
+			"pipeline_tag":"text-generation",
+			"tags":["transformers","license:llama3"],
+			"config":{"architectures":["LlamaForCausalLM"],"torch_dtype":"bfloat16","max_position_embeddings":8192},
+			"cardData":{"license":"llama3","base_model":"meta-llama/Meta-Llama-3-8B-Pretrained"}
+		}`))
+	})
+	hfMux.HandleFunc("/api/models/meta-llama/Meta-Llama-3-8B-Pretrained", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"meta-llama/Meta-Llama-3-8B-Pretrained"}`))
+	})
+	hfSrv := httptest.NewServer(hfMux)
+	defer hfSrv.Close()
+
+	e := &Enumerator{HFBaseURL: hfSrv.URL, HFHTTPClient: hfSrv.Client()}
+	m, err := e.Resolve(context.Background(), "meta-llama/Meta-Llama-3-8B")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if m.Root != "meta-llama/Meta-Llama-3-8B" {
+		t.Errorf("Root = %q", m.Root)
+	}
+	if len(m.Aliases) != 0 {
+		t.Errorf("Aliases should be empty for Resolve, got %v", m.Aliases)
+	}
+	if !m.Features.TextGeneration {
+		t.Errorf("TextGeneration not set: %+v", m.Features)
+	}
+	if m.Features.Quantization != "bf16" {
+		t.Errorf("Quantization = %q, want bf16", m.Features.Quantization)
+	}
+	if m.MaxModelLen != 8192 {
+		t.Errorf("MaxModelLen = %d, want 8192 (from config)", m.MaxModelLen)
+	}
+	if m.License == nil || m.License.ID != "llama3" {
+		t.Errorf("License = %+v", m.License)
+	}
+	if !reflect.DeepEqual(m.Lineage, []string{"meta-llama/Meta-Llama-3-8B-Pretrained"}) {
+		t.Errorf("Lineage = %v", m.Lineage)
+	}
+	if m.Tags == nil || len(m.Tags.HuggingFace) == 0 {
+		t.Errorf("Tags.HuggingFace should be populated, got %+v", m.Tags)
+	}
+}
+
+func TestResolveSkipHF(t *testing.T) {
+	e := &Enumerator{SkipHF: true}
+	m, err := e.Resolve(context.Background(), "foo/Bar-FP8")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if m.Features.Quantization != "fp8" {
+		t.Errorf("Quantization = %q, want fp8", m.Features.Quantization)
+	}
+	if m.Tags != nil {
+		t.Errorf("Tags should be nil with SkipHF + no compliance match, got %+v", m.Tags)
+	}
+}
+
+func TestResolveErrors(t *testing.T) {
+	e := &Enumerator{SkipHF: true}
+	if _, err := e.Resolve(context.Background(), ""); err == nil {
+		t.Error("expected error on empty id")
+	}
+	if _, err := e.Resolve(context.Background(), "   "); err == nil {
+		t.Error("expected error on whitespace id")
+	}
+	var nilE *Enumerator
+	if _, err := nilE.Resolve(context.Background(), "foo/bar"); err == nil {
+		t.Error("expected error on nil enumerator")
+	}
+}
+
 // TestEnumerateSkipHF ensures the library is usable without HF resolution.
 func TestEnumerateSkipHF(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
