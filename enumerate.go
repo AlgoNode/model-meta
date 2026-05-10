@@ -138,6 +138,30 @@ func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup
 	}
 	if ancestorID != "" && ancestorID != g.root {
 		anc := e.resolveSingle(ctx, hf, rootGroup{root: ancestorID})
+
+		// Pivot through any further lineage the resolved ancestor
+		// itself declares. This matters mainly after a guess: the
+		// guessed parent often has its own base_model chain
+		// (e.g. instruct -> pretrain), and we want the deepest base
+		// reachable, not the first hop. Bounded by MaxLineageDepth
+		// (or 8) and cycle-safe via a visited set.
+		pivotCap := e.MaxLineageDepth
+		if pivotCap <= 0 {
+			pivotCap = 8
+		}
+		visited := map[string]struct{}{g.root: {}, anc.Root: {}}
+		for i := 0; i < pivotCap && len(anc.Lineage) > 0; i++ {
+			next := anc.Lineage[len(anc.Lineage)-1]
+			if next == "" || next == anc.Root {
+				break
+			}
+			if _, seen := visited[next]; seen {
+				break
+			}
+			visited[next] = struct{}{}
+			anc = e.resolveSingle(ctx, hf, rootGroup{root: next})
+		}
+
 		// Enforce non-recursion: an Ancestor never carries its own
 		// Ancestor, even if resolveSingle ever started populating it.
 		anc.Ancestor = nil

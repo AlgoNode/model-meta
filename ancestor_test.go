@@ -288,6 +288,92 @@ func TestEnumerateAncestorGuessQuantizedNoLineage(t *testing.T) {
 	}
 }
 
+// TestEnumerateAncestorPivotsAfterGuess verifies that when the guessed
+// parent itself declares a base_model chain, Ancestor pivots to the
+// deepest reachable base instead of stopping at the first hit.
+//
+// Shape: model is a quantized HF entry with no lineage of its own ->
+// search returns "org/llama-3-8b-instruct" -> instruct's cardData
+// declares "org/llama-3-8b" -> we should land on the base, not the
+// instruct fork.
+func TestEnumerateAncestorPivotsAfterGuess(t *testing.T) {
+	hfMux := http.NewServeMux()
+	hfMux.HandleFunc("/api/models/org/llama-3-8b-instruct-q4", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"org/llama-3-8b-instruct-q4",
+			"tags":["transformers"],
+			"config":{"architectures":["LlamaForCausalLM"],"quantization_config":{"quant_method":"awq"}}
+		}`))
+	})
+	hfMux.HandleFunc("/api/models", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":"org/llama-3-8b-instruct"}]`))
+	})
+	hfMux.HandleFunc("/api/models/org/llama-3-8b-instruct", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"org/llama-3-8b-instruct",
+			"pipeline_tag":"text-generation",
+			"cardData":{"base_model":"org/llama-3-8b"}
+		}`))
+	})
+	hfMux.HandleFunc("/api/models/org/llama-3-8b", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"org/llama-3-8b",
+			"pipeline_tag":"text-generation",
+			"tags":["transformers"],
+			"config":{"torch_dtype":"bfloat16"}
+		}`))
+	})
+	hfSrv := httptest.NewServer(hfMux)
+	defer hfSrv.Close()
+
+	e := &Enumerator{HFBaseURL: hfSrv.URL, HFHTTPClient: hfSrv.Client()}
+	m, err := e.Resolve(context.Background(), "org/llama-3-8b-instruct-q4")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if m.Ancestor == nil {
+		t.Fatal("Ancestor should be populated")
+	}
+	if m.Ancestor.Root != "org/llama-3-8b" {
+		t.Errorf("Ancestor.Root = %q, want org/llama-3-8b (pivoted past guess)", m.Ancestor.Root)
+	}
+	if m.Ancestor.Features.Quantization != "bf16" {
+		t.Errorf("Ancestor features should be the base's, got %+v", m.Ancestor.Features)
+	}
+}
+
+// TestEnumerateAncestorPivotCycleSafe verifies that a base_model cycle
+// across two pivots (A -> B, B -> A) doesn't loop forever.
+func TestEnumerateAncestorPivotCycleSafe(t *testing.T) {
+	hfMux := http.NewServeMux()
+	hfMux.HandleFunc("/api/models/me/model", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"me/model","cardData":{"base_model":"org/A"}}`))
+	})
+	hfMux.HandleFunc("/api/models/org/A", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"org/A","cardData":{"base_model":"org/B"}}`))
+	})
+	hfMux.HandleFunc("/api/models/org/B", func(w http.ResponseWriter, _ *http.Request) {
+		// Cycle back to A; pivot must not loop forever.
+		_, _ = w.Write([]byte(`{"id":"org/B","cardData":{"base_model":"org/A"}}`))
+	})
+	hfSrv := httptest.NewServer(hfMux)
+	defer hfSrv.Close()
+
+	e := &Enumerator{HFBaseURL: hfSrv.URL, HFHTTPClient: hfSrv.Client()}
+	m, err := e.Resolve(context.Background(), "me/model")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if m.Ancestor == nil {
+		t.Fatal("Ancestor should be set")
+	}
+	// Acceptable terminal: either A or B; the test's purpose is to
+	// confirm we didn't hang.
+	if m.Ancestor.Root != "org/A" && m.Ancestor.Root != "org/B" {
+		t.Errorf("Ancestor.Root = %q, want org/A or org/B", m.Ancestor.Root)
+	}
+}
+
 // TestEnumerateAncestorSkippedForBaseModel pins the gate that stops us
 // from pointing a true base at one of its sibling derivatives. A model
 // that resolves on HF, declares no base_model, and reports a native

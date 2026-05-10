@@ -165,9 +165,16 @@ top-most upstream model we could identify:
   never searched, so true bases like `meta-llama/Meta-Llama-3-8B`
   aren't pointed at their own siblings.
 
-The non-recursion guarantee: `Ancestor.Ancestor` is always nil.
-Ancestor entries do walk their own `Lineage` though, so you can still
-see the ancestor's own declared upstream chain.
+If the resolved Ancestor itself declares a `base_model`, the library
+**pivots** to the tip of that chain and re-resolves — repeating up to
+`MaxLineageDepth` times — so you land on the deepest reachable base
+rather than stopping at the first hop. This matters mostly after a
+search-guess: a guessed parent like `org/llama-3-8b-instruct` will
+pivot to `org/llama-3-8b` when the latter is declared upstream.
+
+The non-recursion guarantee: `Ancestor.Ancestor` is always nil. Ancestor
+entries do walk their own `Lineage` though, so you can still see the
+ancestor's own declared upstream chain.
 
 ### MaxModelLen
 
