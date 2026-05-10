@@ -1,4 +1,4 @@
-// Command example resolves model metadata in one of two modes:
+// Command resolve-model resolves model metadata in one of two modes:
 //
 //   - default: enumerate a vLLM (or any OpenAI-compatible) endpoint and
 //     print the deduplicated, feature-resolved catalogue.
@@ -6,12 +6,16 @@
 //     id directly. Useful for previewing what Enumerate would produce
 //     for a specific model without standing up a server.
 //
+// Install:
+//
+//	go install github.com/algonode/model-meta/resolve-model@latest
+//
 // Usage:
 //
-//	go run ./example                                # default endpoint
-//	go run ./example http://host:8000               # explicit vLLM endpoint
-//	go run ./example -m meta-llama/Meta-Llama-3-8B  # single HF model
-//	VLLM_API_KEY=... HF_TOKEN=... go run ./example
+//	resolve-model                                   # default endpoint
+//	resolve-model http://host:8000                  # explicit vLLM endpoint
+//	resolve-model -m meta-llama/Meta-Llama-3-8B     # single HF model
+//	VLLM_API_KEY=... HF_TOKEN=... resolve-model
 package main
 
 import (

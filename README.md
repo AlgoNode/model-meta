@@ -31,12 +31,21 @@ models, err := e.Enumerate(ctx)
 m, err := e.Resolve(ctx, "meta-llama/Meta-Llama-3-8B")
 ```
 
-The example CLI mirrors both modes:
+## CLI
+
+A `resolve-model` binary ships with the module — install with:
 
 ```sh
-go run ./example                                # default localhost:8000
-go run ./example http://host:8000               # explicit vLLM endpoint
-go run ./example -m meta-llama/Meta-Llama-3-8B  # single HF model, no endpoint
+go install github.com/algonode/model-meta/resolve-model@latest
+```
+
+It mirrors both library modes:
+
+```sh
+resolve-model                                   # default localhost:8000
+resolve-model http://host:8000                  # explicit vLLM endpoint
+resolve-model -m meta-llama/Meta-Llama-3-8B     # single HF model, no endpoint
+VLLM_API_KEY=... HF_TOKEN=... resolve-model
 ```
 
 ## What you get back

@@ -1,6 +1,6 @@
 /bin/
 /dist/
-/example/example
+/resolve-model/resolve-model
 *.test
 *.out
 *.prof
