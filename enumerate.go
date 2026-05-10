@@ -44,9 +44,9 @@ type Enumerator struct {
 	SkipHF bool
 
 	// SkipGuessParent disables the HF search-and-guess fallback used to
-	// populate Foundation when direct HF resolution fails (e.g.
+	// populate Ancestor when direct HF resolution fails (e.g.
 	// llama.cpp endpoints whose id is the local filename). Default
-	// behavior is to guess. The lineage-tip path to Foundation is
+	// behavior is to guess. The lineage-tip path to Ancestor is
 	// always taken when applicable; this flag only gates the search
 	// fallback.
 	SkipGuessParent bool
@@ -117,38 +117,38 @@ func (e *Enumerator) Resolve(ctx context.Context, modelID string) (*Model, error
 }
 
 // resolveModel produces a Model for one rootGroup, including a
-// non-recursive Foundation when one can be identified. Shared by
+// non-recursive Ancestor when one can be identified. Shared by
 // Enumerate and Resolve.
 func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup) Model {
 	m := e.resolveSingle(ctx, hf, g)
 
-	foundationID := ""
+	ancestorID := ""
 	switch {
 	case len(m.Lineage) > 0:
 		// Top of lineage = deepest declared base_model.
-		foundationID = m.Lineage[len(m.Lineage)-1]
+		ancestorID = m.Lineage[len(m.Lineage)-1]
 	case hf != nil && !e.SkipGuessParent && (!m.Flags.HuggingFace || m.Flags.Quantized):
 		// Either: direct HF lookup failed (likely a llama.cpp local
 		// id), or the model is on HF but declared no base_model AND
 		// is quantized — a strong signal that it's a derivative whose
 		// upstream the author didn't fill in. Native-dtype models
-		// without lineage are assumed to be true foundations and not
+		// without lineage are assumed to be true bases and not
 		// searched, to avoid pointing them at sibling derivatives.
-		foundationID = hf.guessParent(ctx, g.root)
+		ancestorID = hf.guessParent(ctx, g.root)
 	}
-	if foundationID != "" && foundationID != g.root {
-		fnd := e.resolveSingle(ctx, hf, rootGroup{root: foundationID})
-		// Enforce non-recursion: a Foundation never carries its own
-		// Foundation, even if resolveSingle ever started populating it.
-		fnd.Foundation = nil
-		m.Foundation = &fnd
+	if ancestorID != "" && ancestorID != g.root {
+		anc := e.resolveSingle(ctx, hf, rootGroup{root: ancestorID})
+		// Enforce non-recursion: an Ancestor never carries its own
+		// Ancestor, even if resolveSingle ever started populating it.
+		anc.Ancestor = nil
+		m.Ancestor = &anc
 	}
 	return m
 }
 
 // resolveSingle fills a Model from a single rootGroup without computing
-// the Foundation. It is the per-model body shared between the top-level
-// resolution and the recursive-but-bounded foundation resolution.
+// the Ancestor. It is the per-model body shared between the top-level
+// resolution and the bounded ancestor resolution.
 func (e *Enumerator) resolveSingle(ctx context.Context, hf *hfClient, g rootGroup) Model {
 	m := Model{
 		Root:        g.root,

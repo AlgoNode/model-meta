@@ -146,12 +146,12 @@ Walks `cardData.base_model` outward, depth-capped (default 8) and
 cycle-safe. `Lineage[0]` is the immediate parent; the last element is
 the deepest declared ancestor.
 
-### Foundation
+### Ancestor
 
-`Model.Foundation` carries a fully-resolved (non-recursive) view of the
-top ancestor we could identify:
+`Model.Ancestor` carries a fully-resolved (non-recursive) view of the
+top-most upstream model we could identify:
 
-- When `Lineage` is non-empty, `Foundation` resolves the **last** entry
+- When `Lineage` is non-empty, `Ancestor` resolves the **last** entry
   (the deepest declared `base_model`).
 - When the model is **not on HF** (e.g. llama.cpp ids like
   `qwen2.5-7b-instruct-q4_k_m`), or **is on HF but declares no
@@ -161,13 +161,13 @@ top ancestor we could identify:
   name, and accepts the top hit only if at least 60% of normalized
   query tokens overlap with the candidate id. Disable the search
   fallback with `Enumerator.SkipGuessParent`. Native-dtype HF models
-  with no lineage (bf16/fp16/fp32) are treated as foundations
-  themselves and never searched, so true bases like
-  `meta-llama/Meta-Llama-3-8B` aren't pointed at their own siblings.
+  with no lineage (bf16/fp16/fp32) are treated as bases themselves and
+  never searched, so true bases like `meta-llama/Meta-Llama-3-8B`
+  aren't pointed at their own siblings.
 
-The non-recursion guarantee: `Foundation.Foundation` is always nil.
-Foundation entries do walk their own `Lineage` though, so you can still
-see the foundation's declared ancestors.
+The non-recursion guarantee: `Ancestor.Ancestor` is always nil.
+Ancestor entries do walk their own `Lineage` though, so you can still
+see the ancestor's own declared upstream chain.
 
 ### MaxModelLen
 
@@ -189,7 +189,7 @@ omits it, falls back to `config.max_position_embeddings` from HF.
 | `HFHTTPClient`    | Custom client for HF requests (default: 30s timeout).      |
 | `MaxLineageDepth` | Cap on `base_model` traversal (default 8).                 |
 | `SkipHF`          | Disable HF resolution; only id-derived signals are used.   |
-| `SkipGuessParent` | Disable the HF search fallback used to populate Foundation when direct resolution fails. Lineage-tip Foundation is unaffected. |
+| `SkipGuessParent` | Disable the HF search fallback used to populate Ancestor when direct resolution fails. Lineage-tip Ancestor is unaffected. |
 
 ## Development
 

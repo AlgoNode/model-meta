@@ -11,12 +11,12 @@ import (
 
 func TestNormalizeForSearch(t *testing.T) {
 	cases := map[string]string{
-		"qwen2.5-7b-instruct-q4_k_m":             "qwen2 5 7b instruct",
+		"qwen2.5-7b-instruct-q4_k_m":              "qwen2 5 7b instruct",
 		"meta-llama/Meta-Llama-3-8B-Instruct-AWQ": "meta llama 3 8b instruct",
-		"TheBloke/Llama-3-8B-GGUF":               "llama 3 8b",
-		"foo-IQ3_XXS":                            "foo",
-		"default":                                "default",
-		"":                                       "",
+		"TheBloke/Llama-3-8B-GGUF":                "llama 3 8b",
+		"foo-IQ3_XXS":                             "foo",
+		"default":                                 "default",
+		"":                                        "",
 	}
 	for in, want := range cases {
 		if got := normalizeForSearch(in); got != want {
@@ -124,10 +124,10 @@ func TestGuessParent(t *testing.T) {
 	})
 }
 
-// TestEnumerateFoundationFromLineage verifies that when a model has a
-// declared base_model chain, Foundation is the deepest ancestor and is
+// TestEnumerateAncestorFromLineage verifies that when a model has a
+// declared base_model chain, Ancestor is the deepest entry and is
 // fully resolved.
-func TestEnumerateFoundationFromLineage(t *testing.T) {
+func TestEnumerateAncestorFromLineage(t *testing.T) {
 	hfMux := http.NewServeMux()
 	hfMux.HandleFunc("/api/models/org/finetune", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
@@ -163,26 +163,26 @@ func TestEnumerateFoundationFromLineage(t *testing.T) {
 	if !reflect.DeepEqual(m.Lineage, []string{"org/instruct", "org/base"}) {
 		t.Fatalf("Lineage = %v", m.Lineage)
 	}
-	if m.Foundation == nil {
-		t.Fatal("Foundation should be set from lineage tip")
+	if m.Ancestor == nil {
+		t.Fatal("Ancestor should be set from lineage tip")
 	}
-	if m.Foundation.Root != "org/base" {
-		t.Errorf("Foundation.Root = %q, want org/base", m.Foundation.Root)
+	if m.Ancestor.Root != "org/base" {
+		t.Errorf("Ancestor.Root = %q, want org/base", m.Ancestor.Root)
 	}
-	if !m.Foundation.Features.TextGeneration {
-		t.Errorf("Foundation features not resolved: %+v", m.Foundation.Features)
+	if !m.Ancestor.Features.TextGeneration {
+		t.Errorf("Ancestor features not resolved: %+v", m.Ancestor.Features)
 	}
-	if m.Foundation.License == nil || m.Foundation.License.ID != "apache-2.0" {
-		t.Errorf("Foundation license = %+v", m.Foundation.License)
+	if m.Ancestor.License == nil || m.Ancestor.License.ID != "apache-2.0" {
+		t.Errorf("Ancestor license = %+v", m.Ancestor.License)
 	}
-	if m.Foundation.Foundation != nil {
-		t.Error("Foundation.Foundation must be nil (non-recursive)")
+	if m.Ancestor.Ancestor != nil {
+		t.Error("Ancestor.Ancestor must be nil (non-recursive)")
 	}
 }
 
-// TestEnumerateFoundationFromGuess verifies that when direct HF lookup
-// fails, Foundation is populated from the search-guessed parent.
-func TestEnumerateFoundationFromGuess(t *testing.T) {
+// TestEnumerateAncestorFromGuess verifies that when direct HF lookup
+// fails, Ancestor is populated from the search-guessed parent.
+func TestEnumerateAncestorFromGuess(t *testing.T) {
 	hfMux := http.NewServeMux()
 	// Direct lookup for the llama.cpp-style id -> 404.
 	hfMux.HandleFunc("/api/models/qwen2.5-7b-instruct-q4_k_m", func(w http.ResponseWriter, _ *http.Request) {
@@ -217,24 +217,24 @@ func TestEnumerateFoundationFromGuess(t *testing.T) {
 	if m.Flags.HuggingFace {
 		t.Error("HuggingFace flag should be false (404)")
 	}
-	if m.Foundation == nil {
-		t.Fatal("Foundation should be guessed when direct lookup fails")
+	if m.Ancestor == nil {
+		t.Fatal("Ancestor should be guessed when direct lookup fails")
 	}
-	if m.Foundation.Root != "Qwen/Qwen2.5-7B-Instruct" {
-		t.Errorf("Foundation.Root = %q", m.Foundation.Root)
+	if m.Ancestor.Root != "Qwen/Qwen2.5-7B-Instruct" {
+		t.Errorf("Ancestor.Root = %q", m.Ancestor.Root)
 	}
-	if !m.Foundation.Flags.HuggingFace {
-		t.Errorf("Foundation should have huggingface flag set")
+	if !m.Ancestor.Flags.HuggingFace {
+		t.Errorf("Ancestor should have huggingface flag set")
 	}
-	if m.Foundation.Foundation != nil {
-		t.Error("Foundation.Foundation must be nil")
+	if m.Ancestor.Ancestor != nil {
+		t.Error("Ancestor.Ancestor must be nil")
 	}
 }
 
-// TestEnumerateFoundationGuessQuantizedNoLineage verifies that a model
+// TestEnumerateAncestorGuessQuantizedNoLineage verifies that a model
 // that resolves on HF but declares no base_model and is quantized
 // triggers the search fallback. This is the AEON-7/Gemma-NVFP4 case.
-func TestEnumerateFoundationGuessQuantizedNoLineage(t *testing.T) {
+func TestEnumerateAncestorGuessQuantizedNoLineage(t *testing.T) {
 	hfMux := http.NewServeMux()
 	hfMux.HandleFunc("/api/models/AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4", func(w http.ResponseWriter, _ *http.Request) {
 		// HF returns 200 but cardData is null and there is no
@@ -280,20 +280,19 @@ func TestEnumerateFoundationGuessQuantizedNoLineage(t *testing.T) {
 	if m.Features.Quantization != "nvfp4" {
 		t.Fatalf("Quantization = %q, want nvfp4", m.Features.Quantization)
 	}
-	if m.Foundation == nil {
-		t.Fatal("Foundation should be guessed when HF model is quantized but has no lineage")
+	if m.Ancestor == nil {
+		t.Fatal("Ancestor should be guessed when HF model is quantized but has no lineage")
 	}
-	if m.Foundation.Root != "google/gemma-4-26b-a4b-it" {
-		t.Errorf("Foundation.Root = %q", m.Foundation.Root)
+	if m.Ancestor.Root != "google/gemma-4-26b-a4b-it" {
+		t.Errorf("Ancestor.Root = %q", m.Ancestor.Root)
 	}
 }
 
-// TestEnumerateFoundationSkippedForFoundationModel pins the gate that
-// stops us from pointing a true foundation at one of its sibling
-// derivatives. A model that resolves on HF, declares no base_model,
-// and reports a native float dtype is assumed to be a foundation
-// itself.
-func TestEnumerateFoundationSkippedForFoundationModel(t *testing.T) {
+// TestEnumerateAncestorSkippedForBaseModel pins the gate that stops us
+// from pointing a true base at one of its sibling derivatives. A model
+// that resolves on HF, declares no base_model, and reports a native
+// float dtype is assumed to be a base itself.
+func TestEnumerateAncestorSkippedForBaseModel(t *testing.T) {
 	hfMux := http.NewServeMux()
 	hfMux.HandleFunc("/api/models/meta-llama/Meta-Llama-3-8B", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
@@ -315,16 +314,16 @@ func TestEnumerateFoundationSkippedForFoundationModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if m.Foundation != nil {
-		t.Errorf("Foundation should be nil for a native-dtype HF model with no lineage, got %+v", m.Foundation)
+	if m.Ancestor != nil {
+		t.Errorf("Ancestor should be nil for a native-dtype HF model with no lineage, got %+v", m.Ancestor)
 	}
 	if searchHit {
-		t.Error("search must not be called for native-dtype foundation candidates")
+		t.Error("search must not be called for native-dtype base candidates")
 	}
 }
 
-// TestEnumerateFoundationSkipGuess verifies the SkipGuessParent flag.
-func TestEnumerateFoundationSkipGuess(t *testing.T) {
+// TestEnumerateAncestorSkipGuess verifies the SkipGuessParent flag.
+func TestEnumerateAncestorSkipGuess(t *testing.T) {
 	hfMux := http.NewServeMux()
 	hfMux.HandleFunc("/api/models/qwen2.5-7b-instruct-q4_k_m", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "no", http.StatusNotFound)
@@ -342,8 +341,8 @@ func TestEnumerateFoundationSkipGuess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if m.Foundation != nil {
-		t.Errorf("Foundation should be nil when SkipGuessParent is set, got %+v", m.Foundation)
+	if m.Ancestor != nil {
+		t.Errorf("Ancestor should be nil when SkipGuessParent is set, got %+v", m.Ancestor)
 	}
 	if searchHit {
 		t.Error("search endpoint must not be called when SkipGuessParent is true")

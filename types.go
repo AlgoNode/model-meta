@@ -45,13 +45,13 @@ type Model struct {
 	// HF resolution failed, was skipped, or no license was declared.
 	License *License `json:"license,omitempty"`
 
-	// Foundation is the resolved metadata for the top-most ancestor we
-	// could identify — either the last entry in Lineage (the deepest
+	// Ancestor is the resolved metadata for the top-most upstream model
+	// we could identify — either the last entry in Lineage (the deepest
 	// declared base_model) when the model declares a chain, or a
 	// search-guessed parent when the model itself is unknown to the
-	// Hub. Resolution is non-recursive: Foundation.Foundation is
-	// always nil. Disabled via Enumerator.SkipGuessParent.
-	Foundation *Model `json:"foundation,omitempty"`
+	// Hub. Resolution is non-recursive: Ancestor.Ancestor is always
+	// nil. Disabled via Enumerator.SkipGuessParent.
+	Ancestor *Model `json:"ancestor,omitempty"`
 }
 
 // Flags summarizes a Model's resolution result with a small set of
