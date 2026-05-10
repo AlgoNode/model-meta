@@ -159,17 +159,17 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	if awq.Features.Quantization != "awq" {
 		t.Errorf("awq quant = %q, want awq", awq.Features.Quantization)
 	}
-	if awq.HFTags != nil {
-		t.Errorf("HFTags should be nil on HF 404, got %v", awq.HFTags)
+	if awq.Tags != nil && len(awq.Tags.HuggingFace) != 0 {
+		t.Errorf("Tags.HuggingFace should be empty on HF 404, got %+v", awq.Tags)
 	}
 
 	wantLlamaTags := []string{"transformers", "tool-use", "license:llama3"}
-	if !reflect.DeepEqual(llama.HFTags, wantLlamaTags) {
-		t.Errorf("llama HFTags = %v, want %v", llama.HFTags, wantLlamaTags)
+	if llama.Tags == nil || !reflect.DeepEqual(llama.Tags.HuggingFace, wantLlamaTags) {
+		t.Errorf("llama Tags.HuggingFace = %+v, want %v", llama.Tags, wantLlamaTags)
 	}
 	wantBgeTags := []string{"sentence-transformers"}
-	if !reflect.DeepEqual(bge.HFTags, wantBgeTags) {
-		t.Errorf("bge HFTags = %v, want %v", bge.HFTags, wantBgeTags)
+	if bge.Tags == nil || !reflect.DeepEqual(bge.Tags.HuggingFace, wantBgeTags) {
+		t.Errorf("bge Tags.HuggingFace = %+v, want %v", bge.Tags, wantBgeTags)
 	}
 
 	if llama.License == nil || llama.License.ID != "llama3" {
@@ -206,7 +206,7 @@ func TestEnumerateSkipHF(t *testing.T) {
 	if len(models) != 1 || models[0].Features.Quantization != "fp8" {
 		t.Fatalf("unexpected models: %+v", models)
 	}
-	if models[0].HFTags != nil {
-		t.Errorf("HFTags must be nil with SkipHF, got %v", models[0].HFTags)
+	if models[0].Tags != nil {
+		t.Errorf("Tags must be nil with SkipHF and no compliance match, got %+v", models[0].Tags)
 	}
 }

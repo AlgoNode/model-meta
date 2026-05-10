@@ -102,7 +102,7 @@ func TestEnumerateAttachesComplianceTags(t *testing.T) {
 	if len(models) != 1 {
 		t.Fatalf("models = %d, want 1", len(models))
 	}
-	if !reflect.DeepEqual(models[0].Features.ComplianceTags, []string{"Dolphin"}) {
-		t.Fatalf("ComplianceTags = %v", models[0].Features.ComplianceTags)
+	if models[0].Tags == nil || !reflect.DeepEqual(models[0].Tags.Compliance, []string{"Dolphin"}) {
+		t.Fatalf("Tags.Compliance = %+v", models[0].Tags)
 	}
 }

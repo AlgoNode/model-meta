@@ -81,12 +81,13 @@ func (e *Enumerator) Enumerate(ctx context.Context) ([]Model, error) {
 			MaxModelLen: g.maxModelLen,
 			OwnedBy:     g.ownedBy,
 		}
+		var hfTags []string
 		if hf != nil {
 			info, ferr := hf.fetch(ctx, g.root)
 			if ferr == nil {
-				m.Features, m.HFTags = extractFeatures(info, g.root)
+				m.Features, hfTags = extractFeatures(info, g.root)
 				m.Lineage = hf.resolveLineage(ctx, g.root, e.MaxLineageDepth)
-				m.License = extractLicense(info.CardData, m.HFTags)
+				m.License = extractLicense(info.CardData, hfTags)
 				if m.MaxModelLen == 0 && info.Config.MaxPositionEmbed > 0 {
 					m.MaxModelLen = info.Config.MaxPositionEmbed
 				}
@@ -106,7 +107,10 @@ func (e *Enumerator) Enumerate(ctx context.Context) ([]Model, error) {
 		} else {
 			m.Features, _ = extractFeatures(nil, g.root)
 		}
-		m.Features.ComplianceTags = matchComplianceTags(g.root, g.aliases)
+		complianceTags := matchComplianceTags(g.root, g.aliases)
+		if len(hfTags) > 0 || len(complianceTags) > 0 {
+			m.Tags = &Tags{HuggingFace: hfTags, Compliance: complianceTags}
+		}
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Root < out[j].Root })

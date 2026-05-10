@@ -30,15 +30,28 @@ type Model struct {
 	// the oldest known ancestor. Empty when no base_model is declared.
 	Lineage []string `json:"lineage,omitempty"`
 
-	// HFTags is the verbatim tag list HuggingFace returns for this model
-	// (info.tags merged with cardData.tags, deduplicated). Set only when
-	// the Hub resolution succeeds; absent on 404 or when SkipHF is true.
-	HFTags []string `json:"hf_tags,omitempty"`
+	// Tags groups the various tag sets associated with this model
+	// (currently HuggingFace's verbatim list plus the compliance
+	// watchlist matches). Nil when neither set has any entry.
+	Tags *Tags `json:"tags,omitempty"`
 
 	// License carries the model's declared license, resolved from
 	// cardData.license (with fallback to a `license:*` HF tag). Nil when
 	// HF resolution failed, was skipped, or no license was declared.
 	License *License `json:"license,omitempty"`
+}
+
+// Tags collects the named tag sets attached to a Model.
+type Tags struct {
+	// HuggingFace is the verbatim tag list returned by the Hub for this
+	// model (info.tags merged with cardData.tags, deduplicated). Set
+	// only when HF resolution succeeded.
+	HuggingFace []string `json:"huggingface,omitempty"`
+
+	// Compliance lists labels from a curated watchlist (e.g. "Uncensored",
+	// "Dolphin", "RP") that match the model's root id or any of its
+	// aliases. Useful for routing/policy decisions.
+	Compliance []string `json:"compliance,omitempty"`
 }
 
 // License describes the license declared on a HuggingFace model. ID is the
@@ -65,9 +78,4 @@ type Features struct {
 	Quantization  string   `json:"quantization,omitempty"`
 	Architectures []string `json:"architectures,omitempty"`
 	Pipeline      string   `json:"pipeline,omitempty"`
-
-	// ComplianceTags lists labels from a curated watchlist (e.g. "Uncensored",
-	// "Dolphin", "RP") that match the model's root id or any of its aliases.
-	// Useful for routing/policy decisions; never surface as user-facing UI.
-	ComplianceTags []string `json:"compliance_tags,omitempty"`
 }
