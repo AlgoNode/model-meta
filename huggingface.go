@@ -21,13 +21,22 @@ var errHFNotFound = errors.New("huggingface model not found")
 
 // hfModelInfo is the subset of /api/models/{id} we consume.
 type hfModelInfo struct {
-	ID          string     `json:"id"`
-	ModelID     string     `json:"modelId"`
-	Pipeline    string     `json:"pipeline_tag"`
-	LibraryName string     `json:"library_name"`
-	Tags        []string   `json:"tags"`
-	Config      hfConfig   `json:"config"`
-	CardData    hfCardData `json:"cardData"`
+	ID          string      `json:"id"`
+	ModelID     string      `json:"modelId"`
+	Pipeline    string      `json:"pipeline_tag"`
+	LibraryName string      `json:"library_name"`
+	Tags        []string    `json:"tags"`
+	Config      hfConfig    `json:"config"`
+	CardData    hfCardData  `json:"cardData"`
+	Siblings    []hfSibling `json:"siblings"`
+}
+
+// hfSibling is one entry in the HuggingFace `siblings` array describing a
+// file in the model repo. Size may be zero when the basic API response
+// omits it.
+type hfSibling struct {
+	Filename string `json:"rfilename"`
+	Size     int64  `json:"size"`
 }
 
 type hfConfig struct {
@@ -235,8 +244,20 @@ func extractFeatures(info *hfModelInfo, vllmID string) (Features, []string) {
 		}
 		f.Architectures = append([]string(nil), info.Config.Architectures...)
 		tags = mergeTags(info.Tags, info.CardData.Tags)
-		if q := quantFromConfig(info.Config); q != "" {
+		// Quant priority for HF-resolved models:
+		//   1. explicit quantization_config (NVFP4 + quant_method)
+		//   2. GGUF filename (when this is a GGUF repo)
+		//   3. torch_dtype (bf16, fp16, fp32, fp8, fp4)
+		// Falls through to quantFromName(vllmID) below as last resort.
+		if q := quantFromQuantizationConfig(info.Config.QuantizationConfig); q != "" {
 			f.Quantization = q
+		} else if isGGUFRepo(info) {
+			if file := pickCanonicalGGUF(info.Siblings, vllmID); file != "" {
+				f.Quantization = quantFromGGUF(file)
+			}
+		}
+		if f.Quantization == "" {
+			f.Quantization = dtypeToLabel(info.Config.TorchDtype)
 		}
 	}
 	if f.Quantization == "" {
@@ -303,20 +324,26 @@ func quantFromName(id string) string {
 	return strings.ToLower(m[1])
 }
 
-// quantFromConfig derives a normalized quantization label from the parsed
-// config.json fields the Hub returns. It prefers an explicit
-// quantization_config (with NVFP4 recognized via either quant_method or the
-// compressed-tensors `format` field), and falls back to the torch_dtype
-// (bf16, fp16, fp32, fp8, fp4) when nothing more specific is declared.
-// Returns "" when neither source yields a usable label.
-func quantFromConfig(cfg hfConfig) string {
-	method := strings.ToLower(strings.TrimSpace(cfg.QuantizationConfig.QuantMethod))
-	format := strings.ToLower(strings.TrimSpace(cfg.QuantizationConfig.Format))
+// quantFromQuantizationConfig handles the parsed config.json
+// `quantization_config` object. It recognizes NVFP4 via either
+// quant_method=="nvfp4" or compressed-tensors format=="nvfp4-pack-quantized",
+// and otherwise returns the lowercased quant_method ("awq", "gptq", "fp8",
+// ...). Returns "" when no quantization is declared.
+func quantFromQuantizationConfig(qc hfQuantConfig) string {
+	method := strings.ToLower(strings.TrimSpace(qc.QuantMethod))
+	format := strings.ToLower(strings.TrimSpace(qc.Format))
 	if method == "nvfp4" || strings.Contains(format, "nvfp4") {
 		return "nvfp4"
 	}
-	if method != "" {
-		return method
+	return method
+}
+
+// quantFromConfig is a convenience composition of
+// quantFromQuantizationConfig and dtypeToLabel for callers that only need
+// config.json-derived signal (no GGUF lookup).
+func quantFromConfig(cfg hfConfig) string {
+	if q := quantFromQuantizationConfig(cfg.QuantizationConfig); q != "" {
+		return q
 	}
 	return dtypeToLabel(cfg.TorchDtype)
 }
