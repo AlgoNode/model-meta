@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -119,6 +120,76 @@ func TestExtractLicense(t *testing.T) {
 				t.Fatalf("got %+v want %+v", *got, *c.want)
 			}
 		})
+	}
+}
+
+func TestRefineCompressedQuant(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "top-level format",
+			body: `{"quantization_config":{"format":"nvfp4-pack-quantized","quant_method":"compressed-tensors"}}`,
+			want: "nvfp4",
+		},
+		{
+			name: "nested per-group format (Gemma-style)",
+			body: `{"quantization_config":{"quant_method":"compressed-tensors","config_groups":{"group_0":{"format":"nvfp4-pack-quantized","weights":{"num_bits":4}}}}}`,
+			want: "nvfp4",
+		},
+		{
+			name: "no nvfp4 hint",
+			body: `{"quantization_config":{"quant_method":"compressed-tensors","config_groups":{"group_0":{"format":"float-quantized"}}}}`,
+			want: "",
+		},
+		{
+			name: "broken json",
+			body: `not json`,
+			want: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := refineCompressedQuant([]byte(c.body)); got != c.want {
+				t.Errorf("refineCompressedQuant = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestHFClientFetchRawConfigCacheAnd404(t *testing.T) {
+	var hits int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/AEON/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(`{"quantization_config":{"quant_method":"compressed-tensors","config_groups":{"g":{"format":"nvfp4-pack-quantized"}}}}`))
+	})
+	mux.HandleFunc("/missing/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no", http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newHFClient(srv.URL, "", srv.Client())
+	for i := 0; i < 3; i++ {
+		body, err := c.fetchRawConfig(context.Background(), "AEON/model")
+		if err != nil {
+			t.Fatalf("fetch: %v", err)
+		}
+		if !strings.Contains(string(body), "nvfp4") {
+			t.Fatalf("body missing nvfp4: %s", body)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("cache miss: hits=%d, want 1", hits)
+	}
+	if _, err := c.fetchRawConfig(context.Background(), "missing/model"); !errors.Is(err, errHFNotFound) {
+		t.Fatalf("expected errHFNotFound, got %v", err)
+	}
+	if _, err := c.fetchRawConfig(context.Background(), "missing/model"); !errors.Is(err, errHFNotFound) {
+		t.Fatalf("cached 404 not honored, got %v", err)
 	}
 }
 

@@ -120,9 +120,11 @@ type hfClient struct {
 	token   string
 	http    *http.Client
 
-	mu    sync.Mutex
-	cache map[string]*hfModelInfo
-	miss  map[string]struct{}
+	mu       sync.Mutex
+	cache    map[string]*hfModelInfo
+	miss     map[string]struct{}
+	rawCache map[string][]byte
+	rawMiss  map[string]struct{}
 }
 
 func newHFClient(baseURL, token string, httpc *http.Client) *hfClient {
@@ -133,11 +135,13 @@ func newHFClient(baseURL, token string, httpc *http.Client) *hfClient {
 		httpc = http.DefaultClient
 	}
 	return &hfClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    httpc,
-		cache:   make(map[string]*hfModelInfo),
-		miss:    make(map[string]struct{}),
+		baseURL:  strings.TrimRight(baseURL, "/"),
+		token:    token,
+		http:     httpc,
+		cache:    make(map[string]*hfModelInfo),
+		miss:     make(map[string]struct{}),
+		rawCache: make(map[string][]byte),
+		rawMiss:  make(map[string]struct{}),
 	}
 }
 
@@ -196,6 +200,90 @@ func (c *hfClient) fetch(ctx context.Context, id string) (*hfModelInfo, error) {
 	c.cache[id] = &info
 	c.mu.Unlock()
 	return &info, nil
+}
+
+// fetchRawConfig retrieves the model's raw config.json (the file itself,
+// not the API summary). Used to recover detail the API drops — most
+// notably the nested compressed-tensors format. Cached, with 404
+// short-circuit, like fetch.
+func (c *hfClient) fetchRawConfig(ctx context.Context, id string) ([]byte, error) {
+	if id == "" {
+		return nil, errHFNotFound
+	}
+	c.mu.Lock()
+	if v, ok := c.rawCache[id]; ok {
+		c.mu.Unlock()
+		return v, nil
+	}
+	if _, ok := c.rawMiss[id]; ok {
+		c.mu.Unlock()
+		return nil, errHFNotFound
+	}
+	c.mu.Unlock()
+
+	u := c.baseURL + "/" + escapeModelID(id) + "/resolve/main/config.json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("huggingface fetch raw config %s: %w", id, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		c.mu.Lock()
+		c.rawMiss[id] = struct{}{}
+		c.mu.Unlock()
+		return nil, errHFNotFound
+	}
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<14))
+		return nil, fmt.Errorf("huggingface raw config %s: status %d: %s", id, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("huggingface read raw config %s: %w", id, err)
+	}
+	c.mu.Lock()
+	c.rawCache[id] = body
+	c.mu.Unlock()
+	return body, nil
+}
+
+// refineCompressedQuant inspects the raw config.json for a model whose
+// API-reported quant_method is "compressed-tensors" and returns a more
+// specific label (currently NVFP4) when one is implied by the
+// quantization_config. Compressed-tensors stores the format either at
+// the top level or, per layer group, under config_groups.*.format —
+// we check both. Returns "" when no refinement applies.
+func refineCompressedQuant(body []byte) string {
+	var raw struct {
+		QuantizationConfig struct {
+			Format       string                     `json:"format"`
+			ConfigGroups map[string]json.RawMessage `json:"config_groups"`
+		} `json:"quantization_config"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(raw.QuantizationConfig.Format), "nvfp4") {
+		return "nvfp4"
+	}
+	for _, g := range raw.QuantizationConfig.ConfigGroups {
+		var group struct {
+			Format string `json:"format"`
+		}
+		if json.Unmarshal(g, &group) == nil {
+			if strings.Contains(strings.ToLower(group.Format), "nvfp4") {
+				return "nvfp4"
+			}
+		}
+	}
+	return ""
 }
 
 // resolveLineage walks base_model links from the given id outward, stopping

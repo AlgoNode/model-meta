@@ -58,7 +58,8 @@ func TestEnumerateEndToEnd(t *testing.T) {
 				{"id":"llama3","object":"model","root":"meta-llama/Meta-Llama-3-8B-Instruct","owned_by":"meta-llama"},
 				{"id":"default","object":"model","root":"meta-llama/Meta-Llama-3-8B-Instruct","owned_by":"meta-llama"},
 				{"id":"BAAI/bge-small-en","object":"model","root":"BAAI/bge-small-en","owned_by":"baai","max_model_len":512},
-				{"id":"unknown/Model-AWQ","object":"model","root":"unknown/Model-AWQ","owned_by":"x"}
+				{"id":"unknown/Model-AWQ","object":"model","root":"unknown/Model-AWQ","owned_by":"x"},
+				{"id":"AEON/Gemma-NVFP4","object":"model","root":"AEON/Gemma-NVFP4","owned_by":"vllm"}
 			]
 		}`))
 	})
@@ -84,6 +85,22 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	hfMux.HandleFunc("/api/models/unknown/Model-AWQ", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "missing", http.StatusNotFound)
 	})
+	hfMux.HandleFunc("/api/models/AEON/Gemma-NVFP4", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"AEON/Gemma-NVFP4",
+			"tags":["safetensors","compressed-tensors"],
+			"config":{"architectures":["Gemma4ForConditionalGeneration"],"quantization_config":{"quant_method":"compressed-tensors"}}
+		}`))
+	})
+	hfMux.HandleFunc("/AEON/Gemma-NVFP4/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"architectures":["Gemma4ForConditionalGeneration"],
+			"quantization_config":{
+				"quant_method":"compressed-tensors",
+				"config_groups":{"group_0":{"format":"nvfp4-pack-quantized","weights":{"num_bits":4,"type":"float"}}}
+			}
+		}`))
+	})
 	hfSrv := httptest.NewServer(hfMux)
 	defer hfSrv.Close()
 
@@ -97,8 +114,8 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	if len(models) != 3 {
-		t.Fatalf("models = %d, want 3 (got %+v)", len(models), models)
+	if len(models) != 4 {
+		t.Fatalf("models = %d, want 4 (got %+v)", len(models), models)
 	}
 	// Sorted by Root.
 	if !sort.SliceIsSorted(models, func(i, j int) bool { return models[i].Root < models[j].Root }) {
@@ -163,6 +180,14 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	}
 	if awq.License != nil {
 		t.Errorf("awq license should be nil on HF 404, got %+v", awq.License)
+	}
+
+	gemma := byRoot["AEON/Gemma-NVFP4"]
+	if gemma.Root == "" {
+		t.Fatalf("gemma group missing")
+	}
+	if gemma.Features.Quantization != "nvfp4" {
+		t.Errorf("gemma quant = %q, want nvfp4 (refined from compressed-tensors)", gemma.Features.Quantization)
 	}
 }
 
