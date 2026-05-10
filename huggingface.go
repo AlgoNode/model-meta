@@ -76,6 +76,16 @@ func (s *hfStringList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// escapeModelID escapes each path segment of a HuggingFace id while preserving
+// the "/" separator between owner and model name.
+func escapeModelID(id string) string {
+	parts := strings.Split(id, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
 func trimSpace(b []byte) []byte {
 	for len(b) > 0 && (b[0] == ' ' || b[0] == '\t' || b[0] == '\n' || b[0] == '\r') {
 		b = b[1:]
@@ -134,7 +144,7 @@ func (c *hfClient) fetch(ctx context.Context, id string) (*hfModelInfo, error) {
 	}
 	c.mu.Unlock()
 
-	u := c.baseURL + "/api/models/" + url.PathEscape(id)
+	u := c.baseURL + "/api/models/" + escapeModelID(id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
