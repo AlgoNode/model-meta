@@ -218,15 +218,18 @@ func (c *hfClient) resolveLineage(ctx context.Context, id string, maxDepth int) 
 
 // extractFeatures derives a Features value from HF metadata plus the original
 // vLLM-reported id (which often carries quantization suffixes like "-AWQ").
-func extractFeatures(info *hfModelInfo, vllmID string) Features {
+// The second return value is the merged HuggingFace tag list, useful for
+// surfacing as Model.HFTags; it is nil when info is nil.
+func extractFeatures(info *hfModelInfo, vllmID string) (Features, []string) {
 	var f Features
+	var tags []string
 	if info != nil {
 		f.Pipeline = info.Pipeline
 		if f.Pipeline == "" {
 			f.Pipeline = info.CardData.Pipeline
 		}
 		f.Architectures = append([]string(nil), info.Config.Architectures...)
-		f.Tags = mergeTags(info.Tags, info.CardData.Tags)
+		tags = mergeTags(info.Tags, info.CardData.Tags)
 		if info.Config.QuantizationConfig.QuantMethod != "" {
 			f.Quantization = strings.ToLower(info.Config.QuantizationConfig.QuantMethod)
 		}
@@ -234,8 +237,8 @@ func extractFeatures(info *hfModelInfo, vllmID string) Features {
 	if f.Quantization == "" {
 		f.Quantization = quantFromName(vllmID)
 	}
-	applyFeatureFlags(&f)
-	return f
+	applyFeatureFlags(&f, tags)
+	return f, tags
 }
 
 func mergeTags(a, b []string) []string {
@@ -273,10 +276,10 @@ func quantFromName(id string) string {
 }
 
 // applyFeatureFlags populates the boolean capability fields based on pipeline,
-// tags, and architectures already collected on f.
-func applyFeatureFlags(f *Features) {
-	tagSet := make(map[string]struct{}, len(f.Tags))
-	for _, t := range f.Tags {
+// architectures, and the supplied HuggingFace tag list.
+func applyFeatureFlags(f *Features, tags []string) {
+	tagSet := make(map[string]struct{}, len(tags))
+	for _, t := range tags {
 		tagSet[strings.ToLower(t)] = struct{}{}
 	}
 	hasTag := func(prefixes ...string) bool {

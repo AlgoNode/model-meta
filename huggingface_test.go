@@ -56,31 +56,33 @@ func TestQuantFromName(t *testing.T) {
 func TestApplyFeatureFlags(t *testing.T) {
 	f := Features{
 		Pipeline:      "text-generation",
-		Tags:          []string{"vision", "tool-use", "code"},
 		Architectures: []string{"LlamaForCausalLM"},
 	}
-	applyFeatureFlags(&f)
+	applyFeatureFlags(&f, []string{"vision", "tool-use", "code"})
 	if !f.TextGeneration || !f.Vision || !f.ToolUse || !f.Code {
 		t.Fatalf("flags not applied: %+v", f)
 	}
 
 	emb := Features{Pipeline: "feature-extraction"}
-	applyFeatureFlags(&emb)
+	applyFeatureFlags(&emb, nil)
 	if !emb.Embedding || emb.TextGeneration {
 		t.Fatalf("embedding mis-classified: %+v", emb)
 	}
 
 	audio := Features{Pipeline: "automatic-speech-recognition"}
-	applyFeatureFlags(&audio)
+	applyFeatureFlags(&audio, nil)
 	if !audio.Audio {
 		t.Fatalf("audio not detected: %+v", audio)
 	}
 }
 
 func TestExtractFeaturesQuantFromName(t *testing.T) {
-	got := extractFeatures(nil, "meta-llama/Meta-Llama-3-70B-Instruct-AWQ")
+	got, tags := extractFeatures(nil, "meta-llama/Meta-Llama-3-70B-Instruct-AWQ")
 	if got.Quantization != "awq" {
 		t.Fatalf("Quantization = %q, want awq", got.Quantization)
+	}
+	if tags != nil {
+		t.Fatalf("tags should be nil when info is nil, got %v", tags)
 	}
 }
 

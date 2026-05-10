@@ -29,6 +29,11 @@ type Model struct {
 	// Lineage is the chain of base models, ordered from immediate parent to
 	// the oldest known ancestor. Empty when no base_model is declared.
 	Lineage []string `json:"lineage,omitempty"`
+
+	// HFTags is the verbatim tag list HuggingFace returns for this model
+	// (info.tags merged with cardData.tags, deduplicated). Set only when
+	// the Hub resolution succeeds; absent on 404 or when SkipHF is true.
+	HFTags []string `json:"hf_tags,omitempty"`
 }
 
 // Features captures the capabilities and properties resolved for a model.
@@ -42,10 +47,9 @@ type Features struct {
 	ToolUse        bool     `json:"tool_use,omitempty"`
 	Reasoning      bool     `json:"reasoning,omitempty"`
 	Code           bool     `json:"code,omitempty"`
-	Quantization   string   `json:"quantization,omitempty"`
-	Architectures  []string `json:"architectures,omitempty"`
-	Pipeline       string   `json:"pipeline,omitempty"`
-	Tags           []string `json:"tags,omitempty"`
+	Quantization  string   `json:"quantization,omitempty"`
+	Architectures []string `json:"architectures,omitempty"`
+	Pipeline      string   `json:"pipeline,omitempty"`
 
 	// ComplianceTags lists labels from a curated watchlist (e.g. "Uncensored",
 	// "Dolphin", "RP") that match the model's root id or any of its aliases.

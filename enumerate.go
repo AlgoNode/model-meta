@@ -84,17 +84,17 @@ func (e *Enumerator) Enumerate(ctx context.Context) ([]Model, error) {
 		if hf != nil {
 			info, ferr := hf.fetch(ctx, g.root)
 			if ferr == nil {
-				m.Features = extractFeatures(info, g.root)
+				m.Features, m.HFTags = extractFeatures(info, g.root)
 				m.Lineage = hf.resolveLineage(ctx, g.root, e.MaxLineageDepth)
 				if m.MaxModelLen == 0 && info.Config.MaxPositionEmbed > 0 {
 					m.MaxModelLen = info.Config.MaxPositionEmbed
 				}
 			} else {
 				// Without HF, still derive what we can from the id alone.
-				m.Features = extractFeatures(nil, g.root)
+				m.Features, _ = extractFeatures(nil, g.root)
 			}
 		} else {
-			m.Features = extractFeatures(nil, g.root)
+			m.Features, _ = extractFeatures(nil, g.root)
 		}
 		m.Features.ComplianceTags = matchComplianceTags(g.root, g.aliases)
 		out = append(out, m)

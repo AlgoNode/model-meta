@@ -139,6 +139,18 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	if awq.Features.Quantization != "awq" {
 		t.Errorf("awq quant = %q, want awq", awq.Features.Quantization)
 	}
+	if awq.HFTags != nil {
+		t.Errorf("HFTags should be nil on HF 404, got %v", awq.HFTags)
+	}
+
+	wantLlamaTags := []string{"transformers", "tool-use"}
+	if !reflect.DeepEqual(llama.HFTags, wantLlamaTags) {
+		t.Errorf("llama HFTags = %v, want %v", llama.HFTags, wantLlamaTags)
+	}
+	wantBgeTags := []string{"sentence-transformers"}
+	if !reflect.DeepEqual(bge.HFTags, wantBgeTags) {
+		t.Errorf("bge HFTags = %v, want %v", bge.HFTags, wantBgeTags)
+	}
 }
 
 // TestEnumerateSkipHF ensures the library is usable without HF resolution.
@@ -155,5 +167,8 @@ func TestEnumerateSkipHF(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].Features.Quantization != "fp8" {
 		t.Fatalf("unexpected models: %+v", models)
+	}
+	if models[0].HFTags != nil {
+		t.Errorf("HFTags must be nil with SkipHF, got %v", models[0].HFTags)
 	}
 }
