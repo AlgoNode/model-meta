@@ -45,9 +45,12 @@ type hfQuantConfig struct {
 // hfCardData carries optional fields from the model card YAML. base_model can
 // be either a string or an array of strings, hence the custom unmarshal.
 type hfCardData struct {
-	BaseModel hfStringList `json:"base_model"`
-	Pipeline  string       `json:"pipeline_tag"`
-	Tags      []string     `json:"tags"`
+	BaseModel   hfStringList `json:"base_model"`
+	Pipeline    string       `json:"pipeline_tag"`
+	Tags        []string     `json:"tags"`
+	License     string       `json:"license"`
+	LicenseName string       `json:"license_name"`
+	LicenseLink string       `json:"license_link"`
 }
 
 // hfStringList accepts either a JSON string or a JSON array of strings.
@@ -261,6 +264,29 @@ func mergeTags(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// extractLicense pulls a License from the model card data, falling back to a
+// `license:<id>` entry in the merged tag list. Returns nil when no license is
+// declared.
+func extractLicense(card hfCardData, tags []string) *License {
+	id := strings.TrimSpace(card.License)
+	if id == "" {
+		for _, t := range tags {
+			if rest, ok := strings.CutPrefix(strings.ToLower(t), "license:"); ok {
+				id = strings.TrimSpace(rest)
+				break
+			}
+		}
+	}
+	if id == "" {
+		return nil
+	}
+	return &License{
+		ID:   id,
+		Name: strings.TrimSpace(card.LicenseName),
+		Link: strings.TrimSpace(card.LicenseLink),
+	}
 }
 
 // quantPattern matches the common quantization suffixes vLLM users append to

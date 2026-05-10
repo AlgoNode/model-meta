@@ -86,6 +86,7 @@ func (e *Enumerator) Enumerate(ctx context.Context) ([]Model, error) {
 			if ferr == nil {
 				m.Features, m.HFTags = extractFeatures(info, g.root)
 				m.Lineage = hf.resolveLineage(ctx, g.root, e.MaxLineageDepth)
+				m.License = extractLicense(info.CardData, m.HFTags)
 				if m.MaxModelLen == 0 && info.Config.MaxPositionEmbed > 0 {
 					m.MaxModelLen = info.Config.MaxPositionEmbed
 				}

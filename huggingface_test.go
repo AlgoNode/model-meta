@@ -76,6 +76,52 @@ func TestApplyFeatureFlags(t *testing.T) {
 	}
 }
 
+func TestExtractLicense(t *testing.T) {
+	cases := []struct {
+		name string
+		card hfCardData
+		tags []string
+		want *License
+	}{
+		{name: "nothing declared", want: nil},
+		{
+			name: "cardData.license only",
+			card: hfCardData{License: "apache-2.0"},
+			want: &License{ID: "apache-2.0"},
+		},
+		{
+			name: "other-style with name and link",
+			card: hfCardData{License: "other", LicenseName: "Llama 3 Community", LicenseLink: "https://example.com/llama3"},
+			want: &License{ID: "other", Name: "Llama 3 Community", Link: "https://example.com/llama3"},
+		},
+		{
+			name: "fallback to license: tag",
+			tags: []string{"transformers", "License:MIT", "text-generation"},
+			want: &License{ID: "mit"},
+		},
+		{
+			name: "cardData wins over tag fallback",
+			card: hfCardData{License: "apache-2.0"},
+			tags: []string{"license:mit"},
+			want: &License{ID: "apache-2.0"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := extractLicense(c.card, c.tags)
+			if (got == nil) != (c.want == nil) {
+				t.Fatalf("nil mismatch: got %v want %v", got, c.want)
+			}
+			if got == nil {
+				return
+			}
+			if *got != *c.want {
+				t.Fatalf("got %+v want %+v", *got, *c.want)
+			}
+		})
+	}
+}
+
 func TestExtractFeaturesQuantFromName(t *testing.T) {
 	got, tags := extractFeatures(nil, "meta-llama/Meta-Llama-3-70B-Instruct-AWQ")
 	if got.Quantization != "awq" {

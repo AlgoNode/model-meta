@@ -70,9 +70,9 @@ func TestEnumerateEndToEnd(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"id":"meta-llama/Meta-Llama-3-8B-Instruct",
 			"pipeline_tag":"text-generation",
-			"tags":["transformers","tool-use"],
+			"tags":["transformers","tool-use","license:llama3"],
 			"config":{"architectures":["LlamaForCausalLM"],"max_position_embeddings":8192},
-			"cardData":{"base_model":"meta-llama/Meta-Llama-3-8B"}
+			"cardData":{"base_model":"meta-llama/Meta-Llama-3-8B","license":"llama3"}
 		}`))
 	})
 	hfMux.HandleFunc("/api/models/meta-llama/Meta-Llama-3-8B", func(w http.ResponseWriter, _ *http.Request) {
@@ -143,13 +143,23 @@ func TestEnumerateEndToEnd(t *testing.T) {
 		t.Errorf("HFTags should be nil on HF 404, got %v", awq.HFTags)
 	}
 
-	wantLlamaTags := []string{"transformers", "tool-use"}
+	wantLlamaTags := []string{"transformers", "tool-use", "license:llama3"}
 	if !reflect.DeepEqual(llama.HFTags, wantLlamaTags) {
 		t.Errorf("llama HFTags = %v, want %v", llama.HFTags, wantLlamaTags)
 	}
 	wantBgeTags := []string{"sentence-transformers"}
 	if !reflect.DeepEqual(bge.HFTags, wantBgeTags) {
 		t.Errorf("bge HFTags = %v, want %v", bge.HFTags, wantBgeTags)
+	}
+
+	if llama.License == nil || llama.License.ID != "llama3" {
+		t.Errorf("llama license = %+v, want id=llama3", llama.License)
+	}
+	if bge.License != nil {
+		t.Errorf("bge license should be nil (none declared), got %+v", bge.License)
+	}
+	if awq.License != nil {
+		t.Errorf("awq license should be nil on HF 404, got %+v", awq.License)
 	}
 }
 

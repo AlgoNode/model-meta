@@ -34,6 +34,21 @@ type Model struct {
 	// (info.tags merged with cardData.tags, deduplicated). Set only when
 	// the Hub resolution succeeds; absent on 404 or when SkipHF is true.
 	HFTags []string `json:"hf_tags,omitempty"`
+
+	// License carries the model's declared license, resolved from
+	// cardData.license (with fallback to a `license:*` HF tag). Nil when
+	// HF resolution failed, was skipped, or no license was declared.
+	License *License `json:"license,omitempty"`
+}
+
+// License describes the license declared on a HuggingFace model. ID is the
+// canonical short identifier (e.g. "apache-2.0", "mit", "llama3.1", "other").
+// Name and Link are populated for "other"-style licenses where the model
+// author supplied a custom title and URL on the model card.
+type License struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	Link string `json:"link,omitempty"`
 }
 
 // Features captures the capabilities and properties resolved for a model.
