@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -284,6 +285,128 @@ func refineCompressedQuant(body []byte) string {
 		}
 	}
 	return ""
+}
+
+// hfModelSearchResult is the slim subset of a /api/models?search=... entry
+// we consume.
+type hfModelSearchResult struct {
+	ID      string `json:"id"`
+	ModelID string `json:"modelId"`
+}
+
+// searchModels queries the HF Hub search endpoint and returns up to
+// `limit` results sorted by downloads (descending). Used for the
+// guessParent fallback when a direct id resolution fails.
+func (c *hfClient) searchModels(ctx context.Context, query string, limit int) ([]hfModelSearchResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	params := url.Values{
+		"search":    {query},
+		"limit":     {strconv.Itoa(limit)},
+		"sort":      {"downloads"},
+		"direction": {"-1"},
+	}
+	u := c.baseURL + "/api/models?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("huggingface search: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<14))
+		return nil, fmt.Errorf("huggingface search: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out []hfModelSearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("huggingface search decode: %w", err)
+	}
+	return out, nil
+}
+
+// guessParentMinSimilarity is the fraction of normalized query tokens
+// that must appear in a candidate id for the candidate to be accepted as
+// a guessed parent. Set high enough to drop obvious mismatches but low
+// enough to tolerate version/quant noise that the normalizer doesn't
+// strip.
+const guessParentMinSimilarity = 0.6
+
+// guessParent searches HF for a likely parent of `id` and returns the
+// best candidate's HF id, or "" when nothing crosses the similarity
+// gate. The candidate must (a) differ from `id`, (b) share at least
+// guessParentMinSimilarity fraction of normalized tokens with the query,
+// and (c) come from a query of at least two tokens — single-token
+// queries (e.g. "default") are too generic.
+func (c *hfClient) guessParent(ctx context.Context, id string) string {
+	query := normalizeForSearch(id)
+	if len(strings.Fields(query)) < 2 {
+		return ""
+	}
+	results, err := c.searchModels(ctx, query, 5)
+	if err != nil || len(results) == 0 {
+		return ""
+	}
+	for _, r := range results {
+		cand := r.ID
+		if cand == "" {
+			cand = r.ModelID
+		}
+		if cand == "" || cand == id {
+			continue
+		}
+		if similarityScore(query, normalizeForSearch(cand)) >= guessParentMinSimilarity {
+			return cand
+		}
+	}
+	return ""
+}
+
+// normalizeForSearch canonicalizes a model id into a space-separated
+// keyword string suitable for the HF search endpoint. Drops the org/
+// path prefix, strips quant suffixes (vendor and GGUF tier) so they
+// don't poison the search, replaces separators with spaces, and
+// lowercases the result.
+func normalizeForSearch(id string) string {
+	if idx := strings.LastIndex(id, "/"); idx >= 0 {
+		id = id[idx+1:]
+	}
+	id = quantPattern.ReplaceAllString(id, " ")
+	id = ggufIDQuantPattern.ReplaceAllString(id, " ")
+	id = strings.NewReplacer("-", " ", "_", " ", ".", " ", "/", " ").Replace(id)
+	id = strings.ToLower(id)
+	return strings.Join(strings.Fields(id), " ")
+}
+
+// similarityScore returns the fraction of `a` tokens that also appear
+// in `b`. Both inputs are expected to be normalized (lowercase,
+// space-separated). Returns 0 for empty `a`.
+func similarityScore(a, b string) float64 {
+	aTokens := strings.Fields(a)
+	if len(aTokens) == 0 {
+		return 0
+	}
+	bSet := make(map[string]struct{}, len(strings.Fields(b)))
+	for _, t := range strings.Fields(b) {
+		bSet[t] = struct{}{}
+	}
+	matched := 0
+	for _, t := range aTokens {
+		if _, ok := bSet[t]; ok {
+			matched++
+		}
+	}
+	return float64(matched) / float64(len(aTokens))
 }
 
 // resolveLineage walks base_model links from the given id outward, stopping

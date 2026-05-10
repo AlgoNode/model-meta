@@ -42,6 +42,14 @@ type Enumerator struct {
 	// SkipHF disables HuggingFace resolution; only vLLM-reported metadata
 	// is used. Useful for offline or air-gapped setups.
 	SkipHF bool
+
+	// SkipGuessParent disables the HF search-and-guess fallback used to
+	// populate Foundation when direct HF resolution fails (e.g.
+	// llama.cpp endpoints whose id is the local filename). Default
+	// behavior is to guess. The lineage-tip path to Foundation is
+	// always taken when applicable; this flag only gates the search
+	// fallback.
+	SkipGuessParent bool
 }
 
 // Enumerate calls /v1/models on the endpoint, resolves each unique root model
@@ -108,10 +116,35 @@ func (e *Enumerator) Resolve(ctx context.Context, modelID string) (*Model, error
 	return &m, nil
 }
 
-// resolveModel produces a Model for one rootGroup. When hf is nil (SkipHF
-// or constructor failure) only id-derived signals are used. Shared by
-// Enumerate and Resolve so the two entry points stay in lockstep.
+// resolveModel produces a Model for one rootGroup, including a
+// non-recursive Foundation when one can be identified. Shared by
+// Enumerate and Resolve.
 func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup) Model {
+	m := e.resolveSingle(ctx, hf, g)
+
+	foundationID := ""
+	switch {
+	case len(m.Lineage) > 0:
+		// Top of lineage = deepest declared base_model.
+		foundationID = m.Lineage[len(m.Lineage)-1]
+	case !m.Flags.HuggingFace && hf != nil && !e.SkipGuessParent:
+		// Direct HF lookup failed; try a fuzzy search.
+		foundationID = hf.guessParent(ctx, g.root)
+	}
+	if foundationID != "" && foundationID != g.root {
+		fnd := e.resolveSingle(ctx, hf, rootGroup{root: foundationID})
+		// Enforce non-recursion: a Foundation never carries its own
+		// Foundation, even if resolveSingle ever started populating it.
+		fnd.Foundation = nil
+		m.Foundation = &fnd
+	}
+	return m
+}
+
+// resolveSingle fills a Model from a single rootGroup without computing
+// the Foundation. It is the per-model body shared between the top-level
+// resolution and the recursive-but-bounded foundation resolution.
+func (e *Enumerator) resolveSingle(ctx context.Context, hf *hfClient, g rootGroup) Model {
 	m := Model{
 		Root:        g.root,
 		Aliases:     g.aliases,
