@@ -109,6 +109,9 @@ Detected with the following priority — the first source that fires wins:
 4. `torch_dtype` mapping: `bfloat16 → bf16`, `float16/half → fp16`,
    `float32 → fp32`, `float8* → fp8`, `float4* → fp4`.
 5. Vendor suffix on the vLLM id: `-AWQ`, `-GPTQ`, `-FP8`, `-NVFP4`, …
+6. **GGUF tier suffix** on the id: `Q4_K_M`, `IQ3_XXS`, `BF16`, … This is
+   the practical fallback for llama.cpp endpoints, whose `id` is typically
+   the local filename rather than an HF path.
 
 ### Features
 

@@ -46,6 +46,14 @@ func TestQuantFromName(t *testing.T) {
 		"mistralai/Ministral-8B-Instruct":     "",
 		"foo/bar.gguf":                        "gguf",
 		"qwen/Qwen-bnb-4bit":                  "bnb-4bit",
+
+		// llama.cpp-style ids (no vendor suffix, only a GGUF tier).
+		"qwen2.5-7b-instruct-q4_k_m": "q4_k_m",
+		"model-IQ3_XXS":              "iq3_xxs",
+		"Llama-3-BF16":               "bf16",
+
+		// Vendor suffix still wins when both could match.
+		"Some-AWQ-Q4_K_M": "awq",
 	}
 	for in, want := range cases {
 		if got := quantFromName(in); got != want {

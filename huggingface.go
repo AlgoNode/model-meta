@@ -404,12 +404,16 @@ func extractLicense(card hfCardData, tags []string) *License {
 // model ids: AWQ, GPTQ, FP8, INT8/INT4, GGUF, BNB-4BIT, etc.
 var quantPattern = regexp.MustCompile(`(?i)(?:^|[-_.])(awq|gptq|gguf|nvfp4|fp8|fp4|int8|int4|bnb-4bit|bnb-8bit|nf4|w8a8|w4a16)(?:[-_.]|$)`)
 
+// quantFromName extracts a normalized quantization label from a model id.
+// It first tries vLLM-style vendor suffixes (AWQ, GPTQ, FP8, NVFP4, ...)
+// and falls back to llama.cpp-style GGUF tier suffixes (Q4_K_M, IQ3_XXS,
+// BF16, ...) so llama.cpp endpoints — whose `id` is typically the local
+// model filename — still get useful quant detection without HF.
 func quantFromName(id string) string {
-	m := quantPattern.FindStringSubmatch(id)
-	if len(m) < 2 {
-		return ""
+	if m := quantPattern.FindStringSubmatch(id); len(m) >= 2 {
+		return strings.ToLower(m[1])
 	}
-	return strings.ToLower(m[1])
+	return ggufQuantInID(id)
 }
 
 // quantFromQuantizationConfig handles the parsed config.json
