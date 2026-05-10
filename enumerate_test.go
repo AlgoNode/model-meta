@@ -71,7 +71,7 @@ func TestEnumerateEndToEnd(t *testing.T) {
 			"id":"meta-llama/Meta-Llama-3-8B-Instruct",
 			"pipeline_tag":"text-generation",
 			"tags":["transformers","tool-use","license:llama3"],
-			"config":{"architectures":["LlamaForCausalLM"],"max_position_embeddings":8192},
+			"config":{"architectures":["LlamaForCausalLM"],"max_position_embeddings":8192,"torch_dtype":"bfloat16"},
 			"cardData":{"base_model":"meta-llama/Meta-Llama-3-8B","license":"llama3"}
 		}`))
 	})
@@ -125,6 +125,9 @@ func TestEnumerateEndToEnd(t *testing.T) {
 	}
 	if !reflect.DeepEqual(llama.Lineage, []string{"meta-llama/Meta-Llama-3-8B"}) {
 		t.Errorf("llama lineage = %v", llama.Lineage)
+	}
+	if llama.Features.Quantization != "bf16" {
+		t.Errorf("llama quant = %q, want bf16 (from torch_dtype)", llama.Features.Quantization)
 	}
 
 	bge := byRoot["BAAI/bge-small-en"]

@@ -122,6 +122,58 @@ func TestExtractLicense(t *testing.T) {
 	}
 }
 
+func TestQuantFromConfig(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  hfConfig
+		want string
+	}{
+		{name: "empty", cfg: hfConfig{}, want: ""},
+		{
+			name: "torch_dtype bfloat16 => bf16",
+			cfg:  hfConfig{TorchDtype: "bfloat16"},
+			want: "bf16",
+		},
+		{
+			name: "torch_dtype float8_e4m3fn => fp8",
+			cfg:  hfConfig{TorchDtype: "float8_e4m3fn"},
+			want: "fp8",
+		},
+		{
+			name: "torch_dtype float16 => fp16",
+			cfg:  hfConfig{TorchDtype: "float16"},
+			want: "fp16",
+		},
+		{
+			name: "explicit nvfp4 method",
+			cfg:  hfConfig{QuantizationConfig: hfQuantConfig{QuantMethod: "nvfp4"}},
+			want: "nvfp4",
+		},
+		{
+			name: "compressed-tensors with nvfp4 format",
+			cfg:  hfConfig{QuantizationConfig: hfQuantConfig{QuantMethod: "compressed-tensors", Format: "nvfp4-pack-quantized"}},
+			want: "nvfp4",
+		},
+		{
+			name: "awq method overrides torch_dtype",
+			cfg:  hfConfig{TorchDtype: "bfloat16", QuantizationConfig: hfQuantConfig{QuantMethod: "AWQ"}},
+			want: "awq",
+		},
+		{
+			name: "unknown torch_dtype falls through",
+			cfg:  hfConfig{TorchDtype: "weirdtype"},
+			want: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := quantFromConfig(c.cfg); got != c.want {
+				t.Errorf("quantFromConfig = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestExtractFeaturesQuantFromName(t *testing.T) {
 	got, tags := extractFeatures(nil, "meta-llama/Meta-Llama-3-70B-Instruct-AWQ")
 	if got.Quantization != "awq" {

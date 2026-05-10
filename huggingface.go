@@ -34,11 +34,13 @@ type hfConfig struct {
 	Architectures      []string      `json:"architectures"`
 	ModelType          string        `json:"model_type"`
 	MaxPositionEmbed   int           `json:"max_position_embeddings"`
+	TorchDtype         string        `json:"torch_dtype"`
 	QuantizationConfig hfQuantConfig `json:"quantization_config"`
 }
 
 type hfQuantConfig struct {
 	QuantMethod string `json:"quant_method"`
+	Format      string `json:"format"`
 	Bits        int    `json:"bits"`
 }
 
@@ -233,8 +235,8 @@ func extractFeatures(info *hfModelInfo, vllmID string) (Features, []string) {
 		}
 		f.Architectures = append([]string(nil), info.Config.Architectures...)
 		tags = mergeTags(info.Tags, info.CardData.Tags)
-		if info.Config.QuantizationConfig.QuantMethod != "" {
-			f.Quantization = strings.ToLower(info.Config.QuantizationConfig.QuantMethod)
+		if q := quantFromConfig(info.Config); q != "" {
+			f.Quantization = q
 		}
 	}
 	if f.Quantization == "" {
@@ -291,7 +293,7 @@ func extractLicense(card hfCardData, tags []string) *License {
 
 // quantPattern matches the common quantization suffixes vLLM users append to
 // model ids: AWQ, GPTQ, FP8, INT8/INT4, GGUF, BNB-4BIT, etc.
-var quantPattern = regexp.MustCompile(`(?i)(?:^|[-_.])(awq|gptq|gguf|fp8|fp4|int8|int4|bnb-4bit|bnb-8bit|nf4|w8a8|w4a16)(?:[-_.]|$)`)
+var quantPattern = regexp.MustCompile(`(?i)(?:^|[-_.])(awq|gptq|gguf|nvfp4|fp8|fp4|int8|int4|bnb-4bit|bnb-8bit|nf4|w8a8|w4a16)(?:[-_.]|$)`)
 
 func quantFromName(id string) string {
 	m := quantPattern.FindStringSubmatch(id)
@@ -299,6 +301,45 @@ func quantFromName(id string) string {
 		return ""
 	}
 	return strings.ToLower(m[1])
+}
+
+// quantFromConfig derives a normalized quantization label from the parsed
+// config.json fields the Hub returns. It prefers an explicit
+// quantization_config (with NVFP4 recognized via either quant_method or the
+// compressed-tensors `format` field), and falls back to the torch_dtype
+// (bf16, fp16, fp32, fp8, fp4) when nothing more specific is declared.
+// Returns "" when neither source yields a usable label.
+func quantFromConfig(cfg hfConfig) string {
+	method := strings.ToLower(strings.TrimSpace(cfg.QuantizationConfig.QuantMethod))
+	format := strings.ToLower(strings.TrimSpace(cfg.QuantizationConfig.Format))
+	if method == "nvfp4" || strings.Contains(format, "nvfp4") {
+		return "nvfp4"
+	}
+	if method != "" {
+		return method
+	}
+	return dtypeToLabel(cfg.TorchDtype)
+}
+
+// dtypeToLabel maps a torch_dtype string to the short label this library uses
+// in Features.Quantization. Returns "" for unrecognized dtypes.
+func dtypeToLabel(dtype string) string {
+	d := strings.ToLower(strings.TrimSpace(dtype))
+	switch {
+	case d == "":
+		return ""
+	case d == "bfloat16" || d == "bf16":
+		return "bf16"
+	case d == "float16" || d == "half" || d == "fp16":
+		return "fp16"
+	case d == "float32" || d == "float" || d == "fp32":
+		return "fp32"
+	case strings.HasPrefix(d, "float8"):
+		return "fp8"
+	case strings.HasPrefix(d, "float4"):
+		return "fp4"
+	}
+	return ""
 }
 
 // applyFeatureFlags populates the boolean capability fields based on pipeline,
