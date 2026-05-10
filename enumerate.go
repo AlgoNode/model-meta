@@ -96,6 +96,7 @@ func (e *Enumerator) Enumerate(ctx context.Context) ([]Model, error) {
 		} else {
 			m.Features = extractFeatures(nil, g.root)
 		}
+		m.Features.ComplianceTags = matchComplianceTags(g.root, g.aliases)
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Root < out[j].Root })

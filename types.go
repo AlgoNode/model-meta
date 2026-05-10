@@ -46,4 +46,9 @@ type Features struct {
 	Architectures  []string `json:"architectures,omitempty"`
 	Pipeline       string   `json:"pipeline,omitempty"`
 	Tags           []string `json:"tags,omitempty"`
+
+	// ComplianceTags lists labels from a curated watchlist (e.g. "Uncensored",
+	// "Dolphin", "RP") that match the model's root id or any of its aliases.
+	// Useful for routing/policy decisions; never surface as user-facing UI.
+	ComplianceTags []string `json:"compliance_tags,omitempty"`
 }
