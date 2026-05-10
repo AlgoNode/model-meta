@@ -288,10 +288,119 @@ func refineCompressedQuant(body []byte) string {
 }
 
 // hfModelSearchResult is the slim subset of a /api/models?search=... entry
-// we consume.
+// we consume. Tags are read so we can drop quantized candidates without an
+// extra per-candidate fetch.
 type hfModelSearchResult struct {
-	ID      string `json:"id"`
-	ModelID string `json:"modelId"`
+	ID      string   `json:"id"`
+	ModelID string   `json:"modelId"`
+	Tags    []string `json:"tags"`
+}
+
+// quantTagWords flags HF tags that signal a model is quantized. Used to
+// drop quantized candidates from guess-parent search results.
+var quantTagWords = map[string]struct{}{
+	"gguf":               {},
+	"compressed-tensors": {},
+	"bitsandbytes":       {},
+	"awq":                {},
+	"gptq":               {},
+	"4-bit":              {},
+	"8-bit":              {},
+	"nf4":                {},
+	"exl2":               {},
+	"exllamav2":          {},
+}
+
+// tagsLookQuantized reports whether any tag indicates a quantized model.
+// Comparison is lowercase-insensitive against quantTagWords.
+func tagsLookQuantized(tags []string) bool {
+	for _, t := range tags {
+		if _, ok := quantTagWords[strings.ToLower(t)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// forkMarkerWords are tokens that strongly indicate a model is a derivative
+// rather than an upstream base. Stripping them from both the search query
+// and candidate normalization keeps HF's ranking from biasing toward
+// other forks ("uncensored" matching "ultra-uncensored-heretic" etc.).
+var forkMarkerWords = map[string]struct{}{
+	// Compliance watchlist words.
+	"uncensored":  {},
+	"abliterated": {},
+	"ablit":       {},
+	"toxic":       {},
+	"dolphin":     {},
+	"lumimaid":    {},
+	"capybara":    {},
+	"hermes":      {},
+	"openhermes":  {},
+	"nsfw":        {},
+	"rp":          {},
+	"erp":         {},
+	"unfiltered":  {},
+	"heretic":     {},
+	"aggressive":  {},
+	"wizard":      {},
+	// Merge / training method markers.
+	"merge":  {},
+	"merged": {},
+	"slerp":  {},
+	"dare":   {},
+	"ties":   {},
+	"lora":   {},
+	"dpo":    {},
+	"sft":    {},
+	"rlhf":   {},
+	// Common intensity / fork suffixes.
+	"ultra": {},
+}
+
+// baseModelFromTags extracts the first id referenced by a `base_model:[<rel>:]<id>`
+// HF tag. Returns "" when no such tag is present. Examples:
+//
+//	"base_model:google/gemma-4-26b-a4b-it"               -> "google/gemma-4-26b-a4b-it"
+//	"base_model:finetune:google/gemma-4-26b-a4b-it"      -> "google/gemma-4-26b-a4b-it"
+//	"base_model:quantized:foo/bar"                        -> "foo/bar"
+func baseModelFromTags(tags []string) string {
+	for _, t := range tags {
+		rest, ok := strings.CutPrefix(t, "base_model:")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			continue
+		}
+		// `rest` is either "<id>" or "<relationship>:<id>". Split on
+		// the first ":" only when the prefix has no "/" (relationship
+		// names never contain a slash, ids always do).
+		if idx := strings.Index(rest, ":"); idx >= 0 && !strings.Contains(rest[:idx], "/") {
+			rest = rest[idx+1:]
+		}
+		if rest != "" && strings.Contains(rest, "/") {
+			return rest
+		}
+	}
+	return ""
+}
+
+// parentOfInfo returns the immediate parent id declared by a model card
+// or by HF's own `base_model:*` tags. CardData is preferred (authors set
+// it directly); the tag fallback covers cases where the API summary has
+// dropped cardData but HF still surfaces the relationship.
+func parentOfInfo(info *hfModelInfo) string {
+	if info == nil {
+		return ""
+	}
+	if len(info.CardData.BaseModel) > 0 {
+		if v := strings.TrimSpace(info.CardData.BaseModel[0]); v != "" {
+			return v
+		}
+	}
+	return baseModelFromTags(info.Tags)
 }
 
 // searchModels queries the HF Hub search endpoint and returns up to
@@ -335,12 +444,19 @@ func (c *hfClient) searchModels(ctx context.Context, query string, limit int) ([
 	return out, nil
 }
 
-// guessParentMinSimilarity is the fraction of normalized query tokens
-// that must appear in a candidate id for the candidate to be accepted as
-// a guessed parent. Set high enough to drop obvious mismatches but low
-// enough to tolerate version/quant noise that the normalizer doesn't
-// strip.
+// guessParentMinSimilarity is the forward-direction (query ⊆ candidate)
+// gate: at least this fraction of normalized query tokens must appear
+// in the candidate. Loose enough to tolerate minor noise the normalizer
+// missed, strict enough to drop obvious mismatches.
 const guessParentMinSimilarity = 0.6
+
+// guessParentMinReverseSimilarity is the reverse-direction
+// (candidate ⊆ query) gate: at least this fraction of the candidate's
+// own tokens must appear in the query. A true parent's name is a
+// (near-)subset of the model's name, so siblings that introduce extra
+// tokens beyond the query lose. Combined with fork-marker stripping,
+// this keeps unrelated forks out even when HF's ranker prefers them.
+const guessParentMinReverseSimilarity = 0.8
 
 // guessParent searches HF for a likely parent of `id` and returns the
 // best candidate's HF id, or "" when nothing crosses the similarity
@@ -365,9 +481,22 @@ func (c *hfClient) guessParent(ctx context.Context, id string) string {
 		if cand == "" || cand == id {
 			continue
 		}
-		if similarityScore(query, normalizeForSearch(cand)) >= guessParentMinSimilarity {
-			return cand
+		// Drop quantized candidates: a quant of a quant isn't an
+		// ancestor we want to surface.
+		if tagsLookQuantized(r.Tags) {
+			continue
 		}
+		candNorm := normalizeForSearch(cand)
+		if similarityScore(query, candNorm) < guessParentMinSimilarity {
+			continue
+		}
+		if similarityScore(candNorm, query) < guessParentMinReverseSimilarity {
+			// Candidate introduces too many tokens not in the
+			// query — almost certainly a sibling fork rather
+			// than an upstream parent.
+			continue
+		}
+		return cand
 	}
 	return ""
 }
@@ -375,8 +504,10 @@ func (c *hfClient) guessParent(ctx context.Context, id string) string {
 // normalizeForSearch canonicalizes a model id into a space-separated
 // keyword string suitable for the HF search endpoint. Drops the org/
 // path prefix, strips quant suffixes (vendor and GGUF tier) so they
-// don't poison the search, replaces separators with spaces, and
-// lowercases the result.
+// don't poison the search, replaces separators with spaces, lowercases
+// the result, and drops fork-marker words (uncensored, abliterated,
+// dolphin, merge, …) so HF doesn't rank derivatives ahead of the
+// actual upstream.
 func normalizeForSearch(id string) string {
 	if idx := strings.LastIndex(id, "/"); idx >= 0 {
 		id = id[idx+1:]
@@ -385,7 +516,15 @@ func normalizeForSearch(id string) string {
 	id = ggufIDQuantPattern.ReplaceAllString(id, " ")
 	id = strings.NewReplacer("-", " ", "_", " ", ".", " ", "/", " ").Replace(id)
 	id = strings.ToLower(id)
-	return strings.Join(strings.Fields(id), " ")
+	fields := strings.Fields(id)
+	out := fields[:0]
+	for _, t := range fields {
+		if _, skip := forkMarkerWords[t]; skip {
+			continue
+		}
+		out = append(out, t)
+	}
+	return strings.Join(out, " ")
 }
 
 // similarityScore returns the fraction of `a` tokens that also appear
@@ -411,7 +550,9 @@ func similarityScore(a, b string) float64 {
 
 // resolveLineage walks base_model links from the given id outward, stopping
 // at the first model not found on the Hub or a previously visited node. The
-// starting id itself is not included in the returned slice.
+// starting id itself is not included in the returned slice. Each step
+// reads the parent via parentOfInfo so we honor both cardData.base_model
+// and the authoritative `base_model:*` HF tags.
 func (c *hfClient) resolveLineage(ctx context.Context, id string, maxDepth int) []string {
 	if maxDepth <= 0 {
 		maxDepth = 8
@@ -424,10 +565,7 @@ func (c *hfClient) resolveLineage(ctx context.Context, id string, maxDepth int) 
 		if err != nil || info == nil {
 			return out
 		}
-		if len(info.CardData.BaseModel) == 0 {
-			return out
-		}
-		next := strings.TrimSpace(info.CardData.BaseModel[0])
+		next := parentOfInfo(info)
 		if next == "" || next == cur {
 			return out
 		}

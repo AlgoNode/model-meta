@@ -142,9 +142,12 @@ policy decisions.
 
 ### Lineage
 
-Walks `cardData.base_model` outward, depth-capped (default 8) and
-cycle-safe. `Lineage[0]` is the immediate parent; the last element is
-the deepest declared ancestor.
+Walks the declared parent outward, depth-capped (default 8) and
+cycle-safe. The parent at each step is read from `cardData.base_model`
+first, then from authoritative HF `base_model:*` tags as a fallback
+(those tags are present even when the API summary drops `cardData`).
+`Lineage[0]` is the immediate parent; the last element is the deepest
+declared ancestor.
 
 ### Ancestor
 
@@ -157,13 +160,26 @@ top-most upstream model we could identify:
   `qwen2.5-7b-instruct-q4_k_m`), or **is on HF but declares no
   `base_model` and is quantized** (e.g. an NVFP4 fork whose author
   didn't fill in the model card), the library searches HF
-  (`/api/models?search=…&sort=downloads`), normalizes the candidate's
-  name, and accepts the top hit only if at least 60% of normalized
-  query tokens overlap with the candidate id. Disable the search
-  fallback with `Enumerator.SkipGuessParent`. Native-dtype HF models
-  with no lineage (bf16/fp16/fp32) are treated as bases themselves and
-  never searched, so true bases like `meta-llama/Meta-Llama-3-8B`
-  aren't pointed at their own siblings.
+  (`/api/models?search=…&sort=downloads`) with a cleaned-up query and
+  picks the best non-quantized candidate. Concretely:
+  - The query and candidate ids are stripped of vendor/GGUF quant
+    suffixes **and** fork-marker words (`uncensored`, `abliterated`,
+    `dolphin`, `hermes`, `merge`, `dare`, `lora`, `dpo`, `ultra`, …),
+    so HF's ranker doesn't bias toward other forks.
+  - Candidates whose own tags include a quant marker (`gguf`,
+    `compressed-tensors`, `awq`, `gptq`, `bitsandbytes`, `4-bit`,
+    `8-bit`, `nf4`, `exl2`) are dropped — a quant of a quant isn't
+    an upstream.
+  - Two similarity gates: at least 60% of normalized query tokens
+    must appear in the candidate (`query ⊆ candidate`), **and** at
+    least 80% of the candidate's tokens must appear in the query
+    (`candidate ⊆ query`). The second gate kills sibling forks that
+    introduce extra tokens beyond the query.
+
+  Disable the search fallback with `Enumerator.SkipGuessParent`.
+  Native-dtype HF models with no lineage (bf16/fp16/fp32) are treated
+  as bases themselves and never searched, so true bases like
+  `meta-llama/Meta-Llama-3-8B` aren't pointed at their own siblings.
 
 If the resolved Ancestor itself declares a `base_model`, the library
 **pivots** to the tip of that chain and re-resolves — repeating up to

@@ -17,11 +17,80 @@ func TestNormalizeForSearch(t *testing.T) {
 		"foo-IQ3_XXS":                             "foo",
 		"default":                                 "default",
 		"":                                        "",
+
+		// Fork-marker words (compliance + merge/training + intensity) are
+		// stripped so HF search isn't biased toward derivatives.
+		"AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4":              "gemma 4 26b a4b it",
+		"llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic":    "gemma 4 26b a4b it",
+		"some-org/foo-7B-merge-dare-ties":                         "foo 7b",
+		"some-org/foo-7B-Hermes-LoRA":                             "foo 7b",
 	}
 	for in, want := range cases {
 		if got := normalizeForSearch(in); got != want {
 			t.Errorf("normalizeForSearch(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestBaseModelFromTags(t *testing.T) {
+	cases := []struct {
+		name string
+		tags []string
+		want string
+	}{
+		{name: "empty", tags: nil, want: ""},
+		{
+			name: "plain id",
+			tags: []string{"transformers", "base_model:google/gemma-4-26b-a4b-it"},
+			want: "google/gemma-4-26b-a4b-it",
+		},
+		{
+			name: "with finetune relationship prefix",
+			tags: []string{"base_model:finetune:google/gemma-4-26b-a4b-it"},
+			want: "google/gemma-4-26b-a4b-it",
+		},
+		{
+			name: "with quantized relationship prefix",
+			tags: []string{"base_model:quantized:foo/bar"},
+			want: "foo/bar",
+		},
+		{
+			name: "first wins when duplicates with prefix",
+			tags: []string{"base_model:google/gemma-4-26b-a4b-it", "base_model:finetune:google/gemma-4-26b-a4b-it"},
+			want: "google/gemma-4-26b-a4b-it",
+		},
+		{name: "missing slash is rejected", tags: []string{"base_model:notanid"}, want: ""},
+		{name: "unrelated tag", tags: []string{"transformers", "license:apache-2.0"}, want: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := baseModelFromTags(c.tags); got != c.want {
+				t.Errorf("baseModelFromTags(%v) = %q, want %q", c.tags, got, c.want)
+			}
+		})
+	}
+}
+
+func TestTagsLookQuantized(t *testing.T) {
+	cases := []struct {
+		name string
+		tags []string
+		want bool
+	}{
+		{name: "empty", tags: nil, want: false},
+		{name: "transformers + safetensors", tags: []string{"transformers", "safetensors"}, want: false},
+		{name: "gguf", tags: []string{"transformers", "gguf"}, want: true},
+		{name: "compressed-tensors", tags: []string{"compressed-tensors"}, want: true},
+		{name: "uppercase still matches", tags: []string{"GGUF"}, want: true},
+		{name: "AWQ", tags: []string{"awq"}, want: true},
+		{name: "4-bit", tags: []string{"4-bit"}, want: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := tagsLookQuantized(c.tags); got != c.want {
+				t.Errorf("tagsLookQuantized(%v) = %v, want %v", c.tags, got, c.want)
+			}
+		})
 	}
 }
 
@@ -120,6 +189,44 @@ func TestGuessParent(t *testing.T) {
 		got := c.guessParent(context.Background(), "Qwen/Qwen2.5-7B-Instruct")
 		if got != "" {
 			t.Errorf("self-id should be skipped, got %q", got)
+		}
+	})
+
+	t.Run("quantized candidates are filtered", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Top result is a GGUF fork; second is the unquantized
+			// upstream. The quant filter must skip the first.
+			_, _ = w.Write([]byte(`[
+				{"id":"someone/Qwen2.5-7B-Instruct-GGUF","tags":["gguf","transformers"]},
+				{"id":"Qwen/Qwen2.5-7B-Instruct","tags":["transformers","safetensors"]}
+			]`))
+		}))
+		defer srv.Close()
+		c := newHFClient(srv.URL, "", srv.Client())
+		got := c.guessParent(context.Background(), "qwen2.5-7b-instruct-q4_k_m")
+		if got != "Qwen/Qwen2.5-7B-Instruct" {
+			t.Errorf("got %q, want Qwen/Qwen2.5-7B-Instruct (quant fork must be skipped)", got)
+		}
+	})
+
+	t.Run("siblings rejected by reverse-similarity gate", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Candidate normalizes to "qwen2 5 7b instruct rogue
+			// merge" — query-tokens-in-candidate is 4/4 but
+			// candidate-tokens-in-query is only 4/6 = 0.67 < 0.8,
+			// so it must be rejected even though the forward
+			// similarity is 1.0.
+			//
+			// "merge" is a fork marker, gets stripped — so the
+			// fixture uses a non-marker noise word.
+			_, _ = w.Write([]byte(`[
+				{"id":"someone/Qwen2.5-7B-Instruct-rogue-extra-noise-banana","tags":["transformers"]}
+			]`))
+		}))
+		defer srv.Close()
+		c := newHFClient(srv.URL, "", srv.Client())
+		if got := c.guessParent(context.Background(), "qwen2.5-7b-instruct-q4_k_m"); got != "" {
+			t.Errorf("got %q, want empty (sibling-with-extras must be rejected)", got)
 		}
 	})
 }
@@ -285,6 +392,82 @@ func TestEnumerateAncestorGuessQuantizedNoLineage(t *testing.T) {
 	}
 	if m.Ancestor.Root != "google/gemma-4-26b-a4b-it" {
 		t.Errorf("Ancestor.Root = %q", m.Ancestor.Root)
+	}
+}
+
+// TestEnumerateAncestorAEONShape mirrors the real AEON-7 NVFP4 case:
+// the model resolves on HF but cardData is null and there's no
+// base_model:* tag on the model itself. After fork-marker stripping the
+// search query becomes "gemma 4 26b a4b it"; HF returns the official
+// upstream first (no quant tags), and the upstream itself declares its
+// own pre-instruct base via base_model:* tags — the pivot walks one
+// more step to land on that base.
+func TestEnumerateAncestorAEONShape(t *testing.T) {
+	hfMux := http.NewServeMux()
+	// AEON-7-style model: 200, no cardData, compressed-tensors.
+	hfMux.HandleFunc("/api/models/AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+			"tags":["safetensors","gemma4","compressed-tensors","region:us"],
+			"config":{"architectures":["Gemma4ForConditionalGeneration"],"quantization_config":{"quant_method":"compressed-tensors"}}
+		}`))
+	})
+	hfMux.HandleFunc("/AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"quantization_config":{"quant_method":"compressed-tensors","config_groups":{"g":{"format":"nvfp4-pack-quantized"}}}}`))
+	})
+	hfMux.HandleFunc("/api/models", func(w http.ResponseWriter, r *http.Request) {
+		// Verify that "uncensored" was stripped from the query.
+		q := r.URL.Query().Get("search")
+		if strings.Contains(q, "uncensored") {
+			t.Errorf("query still contains uncensored: %q", q)
+		}
+		if q != "gemma 4 26b a4b it" {
+			t.Errorf("unexpected query: %q", q)
+		}
+		// Mirror real HF response: a quant fork outranks the upstream
+		// by downloads but carries `gguf`; quant-filter must drop it
+		// so the upstream wins.
+		_, _ = w.Write([]byte(`[
+			{"id":"llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic-GGUF","tags":["gguf","transformers"]},
+			{"id":"google/gemma-4-26B-A4B-it","tags":["transformers","safetensors","base_model:google/gemma-4-26B-A4B"]}
+		]`))
+	})
+	hfMux.HandleFunc("/api/models/google/gemma-4-26B-A4B-it", func(w http.ResponseWriter, _ *http.Request) {
+		// Upstream model: cardData is missing but the base_model is
+		// surfaced via tags. parentOfInfo should pick it up so the
+		// pivot walks one more step.
+		_, _ = w.Write([]byte(`{
+			"id":"google/gemma-4-26B-A4B-it",
+			"pipeline_tag":"text-generation",
+			"tags":["transformers","base_model:google/gemma-4-26B-A4B"],
+			"config":{"architectures":["Gemma4ForConditionalGeneration"],"torch_dtype":"bfloat16"}
+		}`))
+	})
+	hfMux.HandleFunc("/api/models/google/gemma-4-26B-A4B", func(w http.ResponseWriter, _ *http.Request) {
+		// True base: no further base_model.
+		_, _ = w.Write([]byte(`{
+			"id":"google/gemma-4-26B-A4B",
+			"pipeline_tag":"text-generation",
+			"tags":["transformers","safetensors"],
+			"config":{"architectures":["Gemma4ForConditionalGeneration"],"torch_dtype":"bfloat16"}
+		}`))
+	})
+	hfSrv := httptest.NewServer(hfMux)
+	defer hfSrv.Close()
+
+	e := &Enumerator{HFBaseURL: hfSrv.URL, HFHTTPClient: hfSrv.Client()}
+	m, err := e.Resolve(context.Background(), "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if m.Features.Quantization != "nvfp4" {
+		t.Fatalf("Quantization = %q, want nvfp4", m.Features.Quantization)
+	}
+	if m.Ancestor == nil {
+		t.Fatal("Ancestor should be populated")
+	}
+	if m.Ancestor.Root != "google/gemma-4-26B-A4B" {
+		t.Errorf("Ancestor.Root = %q, want google/gemma-4-26B-A4B (pivoted past the instruct upstream)", m.Ancestor.Root)
 	}
 }
 
