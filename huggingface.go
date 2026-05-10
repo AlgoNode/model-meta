@@ -21,20 +21,20 @@ var errHFNotFound = errors.New("huggingface model not found")
 
 // hfModelInfo is the subset of /api/models/{id} we consume.
 type hfModelInfo struct {
-	ID           string         `json:"id"`
-	ModelID      string         `json:"modelId"`
-	Pipeline     string         `json:"pipeline_tag"`
-	LibraryName  string         `json:"library_name"`
-	Tags         []string       `json:"tags"`
-	Config       hfConfig       `json:"config"`
-	CardData     hfCardData     `json:"cardData"`
+	ID          string     `json:"id"`
+	ModelID     string     `json:"modelId"`
+	Pipeline    string     `json:"pipeline_tag"`
+	LibraryName string     `json:"library_name"`
+	Tags        []string   `json:"tags"`
+	Config      hfConfig   `json:"config"`
+	CardData    hfCardData `json:"cardData"`
 }
 
 type hfConfig struct {
-	Architectures      []string         `json:"architectures"`
-	ModelType          string           `json:"model_type"`
-	MaxPositionEmbed   int              `json:"max_position_embeddings"`
-	QuantizationConfig hfQuantConfig    `json:"quantization_config"`
+	Architectures      []string      `json:"architectures"`
+	ModelType          string        `json:"model_type"`
+	MaxPositionEmbed   int           `json:"max_position_embeddings"`
+	QuantizationConfig hfQuantConfig `json:"quantization_config"`
 }
 
 type hfQuantConfig struct {
