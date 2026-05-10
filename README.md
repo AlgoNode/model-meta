@@ -16,19 +16,38 @@ Requires Go 1.24+.
 ## Quick start
 
 ```go
-import modelmeta "github.com/algonode/model-meta"
+package main
 
-e := &modelmeta.Enumerator{
-    EndpointURL: "http://localhost:8000", // any OpenAI-compatible /v1
-    APIKey:      os.Getenv("VLLM_API_KEY"),
-    HFToken:     os.Getenv("HF_TOKEN"),
+import (
+    "context"
+    "encoding/json"
+    "os"
+    "time"
+
+    modelmeta "github.com/algonode/model-meta"
+)
+
+func main() {
+    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+    defer cancel()
+
+    e := &modelmeta.Enumerator{
+        EndpointURL: "http://localhost:8000", // any OpenAI-compatible /v1
+        APIKey:      os.Getenv("VLLM_API_KEY"),
+        HFToken:     os.Getenv("HF_TOKEN"),
+    }
+
+    // Enumerate everything the endpoint serves.
+    models, _ := e.Enumerate(ctx)
+
+    // Or resolve one HuggingFace model without contacting the endpoint.
+    m, _ := e.Resolve(ctx, "meta-llama/Meta-Llama-3-8B")
+    _ = m
+
+    enc := json.NewEncoder(os.Stdout)
+    enc.SetIndent("", "  ")
+    _ = enc.Encode(models)
 }
-
-// Enumerate everything the endpoint serves.
-models, err := e.Enumerate(ctx)
-
-// Or resolve one HuggingFace model without contacting the endpoint.
-m, err := e.Resolve(ctx, "meta-llama/Meta-Llama-3-8B")
 ```
 
 ## CLI
@@ -77,9 +96,51 @@ that resolves to it:
     "huggingface": true,
     "lineage":     true,
     "quantized":   false
+  },
+  "ancestor": {
+    "root": "meta-llama/Meta-Llama-3-8B",
+    "features": { "text_generation": true, "quantization": "bf16" },
+    "license":  { "id": "llama3" },
+    "flags":    { "huggingface": true, "lineage": false, "quantized": false }
   }
 }
 ```
+
+A messier real-world case — an NVFP4 fork whose author didn't declare a
+`base_model` — still gets a full ancestry through the search-guess +
+pivot pipeline:
+
+```sh
+$ resolve-model -m AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4
+{
+  "root": "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+  "features": {
+    "text_generation": true,
+    "quantization":    "nvfp4",
+    "architectures":   ["Gemma4ForConditionalGeneration"]
+  },
+  "tags": {
+    "huggingface": ["safetensors", "gemma4", "compressed-tensors", ...],
+    "compliance":  ["Uncensored"]
+  },
+  "flags": {
+    "compliant":   true,
+    "huggingface": true,
+    "lineage":     false,
+    "quantized":   true
+  },
+  "ancestor": {
+    "root":     "google/gemma-4-26B-A4B",
+    "features": { "text_generation": true, "quantization": "bf16" }
+  }
+}
+```
+
+Even though `AEON-7/...` declares no parent, the library:
+strips `uncensored` from the search query, drops quantized candidates,
+picks `google/gemma-4-26B-A4B-it` as the closest non-fork match, then
+pivots one step further through that model's own `base_model:*` HF tag
+to land on the true base `google/gemma-4-26B-A4B`.
 
 ## How resolution works
 
@@ -214,6 +275,20 @@ omits it, falls back to `config.max_position_embeddings` from HF.
 | `SkipHF`          | Disable HF resolution; only id-derived signals are used.   |
 | `SkipGuessParent` | Disable the HF search fallback used to populate Ancestor when direct resolution fails. Lineage-tip Ancestor is unaffected. |
 
+## Compatibility
+
+Tested against:
+
+- **vLLM** (`/v1/models`) — full output: aliases, `max_model_len`,
+  features, license, tags, lineage, ancestor.
+- **llama.cpp server** (`/v1/models`) — partial. The `id` is usually the
+  local filename, so HF resolution fails and most metadata comes from
+  the id alone. Quantization is recovered from the GGUF tier suffix
+  (`Q4_K_M`, `IQ3_XXS`, `BF16`, …). Start the server with `--alias <hf-id>`
+  to light up the full pipeline.
+- Any other OpenAI-compatible `/v1/models` endpoint: extra fields are
+  ignored; `id` and (when present) `root` / `max_model_len` are used.
+
 ## Development
 
 ```sh
@@ -223,6 +298,6 @@ make cover      # coverage report
 make all        # fmt + vet + test
 ```
 
-The repo follows a tight convention: every functional change ships in its
-own commit with a short rationale, and every new or modified feature has a
-test.
+The repo follows a tight convention: every functional change ships in
+its own commit with a short rationale, and every new or modified
+feature has a test.
