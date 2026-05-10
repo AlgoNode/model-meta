@@ -153,12 +153,17 @@ top ancestor we could identify:
 
 - When `Lineage` is non-empty, `Foundation` resolves the **last** entry
   (the deepest declared `base_model`).
-- When direct HF lookup for the model itself fails (e.g. llama.cpp ids
-  like `qwen2.5-7b-instruct-q4_k_m`), the library searches HF
+- When the model is **not on HF** (e.g. llama.cpp ids like
+  `qwen2.5-7b-instruct-q4_k_m`), or **is on HF but declares no
+  `base_model` and is quantized** (e.g. an NVFP4 fork whose author
+  didn't fill in the model card), the library searches HF
   (`/api/models?search=…&sort=downloads`), normalizes the candidate's
   name, and accepts the top hit only if at least 60% of normalized
   query tokens overlap with the candidate id. Disable the search
-  fallback with `Enumerator.SkipGuessParent`.
+  fallback with `Enumerator.SkipGuessParent`. Native-dtype HF models
+  with no lineage (bf16/fp16/fp32) are treated as foundations
+  themselves and never searched, so true bases like
+  `meta-llama/Meta-Llama-3-8B` aren't pointed at their own siblings.
 
 The non-recursion guarantee: `Foundation.Foundation` is always nil.
 Foundation entries do walk their own `Lineage` though, so you can still

@@ -231,6 +231,98 @@ func TestEnumerateFoundationFromGuess(t *testing.T) {
 	}
 }
 
+// TestEnumerateFoundationGuessQuantizedNoLineage verifies that a model
+// that resolves on HF but declares no base_model and is quantized
+// triggers the search fallback. This is the AEON-7/Gemma-NVFP4 case.
+func TestEnumerateFoundationGuessQuantizedNoLineage(t *testing.T) {
+	hfMux := http.NewServeMux()
+	hfMux.HandleFunc("/api/models/AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4", func(w http.ResponseWriter, _ *http.Request) {
+		// HF returns 200 but cardData is null and there is no
+		// declared base_model.
+		_, _ = w.Write([]byte(`{
+			"id":"AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+			"tags":["safetensors","gemma4","compressed-tensors"],
+			"config":{
+				"architectures":["Gemma4ForConditionalGeneration"],
+				"quantization_config":{"quant_method":"compressed-tensors"}
+			}
+		}`))
+	})
+	hfMux.HandleFunc("/AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"quantization_config":{"quant_method":"compressed-tensors","config_groups":{"g":{"format":"nvfp4-pack-quantized"}}}}`))
+	})
+	hfMux.HandleFunc("/api/models", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Query().Get("search"), "gemma 4 26b") {
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":"google/gemma-4-26b-a4b-it"}]`))
+	})
+	hfMux.HandleFunc("/api/models/google/gemma-4-26b-a4b-it", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"google/gemma-4-26b-a4b-it",
+			"pipeline_tag":"text-generation",
+			"config":{"architectures":["Gemma4ForConditionalGeneration"],"torch_dtype":"bfloat16"},
+			"cardData":{"license":"gemma"}
+		}`))
+	})
+	hfSrv := httptest.NewServer(hfMux)
+	defer hfSrv.Close()
+
+	e := &Enumerator{HFBaseURL: hfSrv.URL, HFHTTPClient: hfSrv.Client()}
+	m, err := e.Resolve(context.Background(), "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !m.Flags.HuggingFace {
+		t.Fatal("model itself should resolve on HF")
+	}
+	if m.Features.Quantization != "nvfp4" {
+		t.Fatalf("Quantization = %q, want nvfp4", m.Features.Quantization)
+	}
+	if m.Foundation == nil {
+		t.Fatal("Foundation should be guessed when HF model is quantized but has no lineage")
+	}
+	if m.Foundation.Root != "google/gemma-4-26b-a4b-it" {
+		t.Errorf("Foundation.Root = %q", m.Foundation.Root)
+	}
+}
+
+// TestEnumerateFoundationSkippedForFoundationModel pins the gate that
+// stops us from pointing a true foundation at one of its sibling
+// derivatives. A model that resolves on HF, declares no base_model,
+// and reports a native float dtype is assumed to be a foundation
+// itself.
+func TestEnumerateFoundationSkippedForFoundationModel(t *testing.T) {
+	hfMux := http.NewServeMux()
+	hfMux.HandleFunc("/api/models/meta-llama/Meta-Llama-3-8B", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"meta-llama/Meta-Llama-3-8B",
+			"pipeline_tag":"text-generation",
+			"config":{"architectures":["LlamaForCausalLM"],"torch_dtype":"bfloat16"}
+		}`))
+	})
+	searchHit := false
+	hfMux.HandleFunc("/api/models", func(w http.ResponseWriter, _ *http.Request) {
+		searchHit = true
+		_, _ = w.Write([]byte(`[]`))
+	})
+	hfSrv := httptest.NewServer(hfMux)
+	defer hfSrv.Close()
+
+	e := &Enumerator{HFBaseURL: hfSrv.URL, HFHTTPClient: hfSrv.Client()}
+	m, err := e.Resolve(context.Background(), "meta-llama/Meta-Llama-3-8B")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if m.Foundation != nil {
+		t.Errorf("Foundation should be nil for a native-dtype HF model with no lineage, got %+v", m.Foundation)
+	}
+	if searchHit {
+		t.Error("search must not be called for native-dtype foundation candidates")
+	}
+}
+
 // TestEnumerateFoundationSkipGuess verifies the SkipGuessParent flag.
 func TestEnumerateFoundationSkipGuess(t *testing.T) {
 	hfMux := http.NewServeMux()

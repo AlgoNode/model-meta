@@ -127,8 +127,13 @@ func (e *Enumerator) resolveModel(ctx context.Context, hf *hfClient, g rootGroup
 	case len(m.Lineage) > 0:
 		// Top of lineage = deepest declared base_model.
 		foundationID = m.Lineage[len(m.Lineage)-1]
-	case !m.Flags.HuggingFace && hf != nil && !e.SkipGuessParent:
-		// Direct HF lookup failed; try a fuzzy search.
+	case hf != nil && !e.SkipGuessParent && (!m.Flags.HuggingFace || m.Flags.Quantized):
+		// Either: direct HF lookup failed (likely a llama.cpp local
+		// id), or the model is on HF but declared no base_model AND
+		// is quantized — a strong signal that it's a derivative whose
+		// upstream the author didn't fill in. Native-dtype models
+		// without lineage are assumed to be true foundations and not
+		// searched, to avoid pointing them at sibling derivatives.
 		foundationID = hf.guessParent(ctx, g.root)
 	}
 	if foundationID != "" && foundationID != g.root {
